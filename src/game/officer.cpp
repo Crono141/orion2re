@@ -2354,7 +2354,8 @@ namespace OFFICER {
 
         MOX::officer_pictures_screen_seg = allocate::Allocate_Next_Block(MOX::screen_seg, 85000);
 
-        ldrpict = (s_officer_picture_slot*)allocate::Allocate_Next_Block(MOX::screen_seg, sizeof(*ldrpict) * 8);
+        ldrpict = static_cast<s_officer_picture_slot*>(allocate::Allocate_Next_Block_Aligned(
+            MOX::screen_seg, sizeof(*ldrpict) * 8, alignof(s_officer_picture_slot)));
         memset(ldrpict, 0, sizeof(*ldrpict) * 8);
 
         prev_leaders = static_cast<s_prev_leader_data*>(allocate::Allocate_Next_Block(MOX::screen_seg, 0xF71));
