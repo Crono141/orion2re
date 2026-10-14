@@ -12,6 +12,7 @@
 #include "lua/lua_mod_runtime.h"
 
 #if defined(_WIN32)
+#include <io.h>
 #include <process.h>
 #else
 #include <unistd.h>
@@ -100,7 +101,7 @@ extern "C" const char* __lsan_default_suppressions() {
 }
 #endif
 
-static void Configure_Asan_Runtime_() {
+static void Configure_Sanitizer_Runtime_() {
     const char* base_path = SDL_GetBasePath();
     if (base_path == nullptr) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ASAN: unable to resolve game directory: %s", SDL_GetError());
@@ -126,6 +127,35 @@ static void Configure_Asan_Runtime_() {
     } else {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ASAN: unable to allocate report path");
     }
+
+#if defined(_WIN32)
+    const int process_id = _getpid();
+#else
+    const int process_id = getpid();
+#endif
+    char* stderr_path = nullptr;
+    if (SDL_asprintf(&stderr_path, "%s/sanitizer-stderr.%d.log", logs_path, process_id) >= 0) {
+        // GCC's separate UBSan runtime does not use ASan's report path. Redirect
+        // the descriptor too, since sanitizer diagnostics bypass C stdio.
+        FILE* stderr_log = fopen(stderr_path, "a");
+        if (stderr_log != nullptr) {
+            fflush(stderr);
+#if defined(_WIN32)
+            const int result = _dup2(_fileno(stderr_log), _fileno(stderr));
+#else
+            const int result = dup2(fileno(stderr_log), STDERR_FILENO);
+#endif
+            if (result < 0) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Sanitizers: unable to redirect stderr to '%s': %s", stderr_path, strerror(errno));
+            }
+            fclose(stderr_log);
+        } else {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Sanitizers: unable to open '%s': %s", stderr_path, strerror(errno));
+        }
+        SDL_free(stderr_path);
+    } else {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Sanitizers: unable to allocate stderr path");
+    }
     SDL_free(logs_path);
 }
 #endif
@@ -134,7 +164,7 @@ int main(int argc, char** argv) {
     Configure_Game_Log_();
 
 #if defined(ORION2RE_ASAN_BUILD)
-    Configure_Asan_Runtime_();
+    Configure_Sanitizer_Runtime_();
 #endif
 
     const char* base_path = SDL_GetBasePath();
