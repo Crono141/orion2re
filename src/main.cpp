@@ -93,6 +93,13 @@ extern "C" const char* __asan_default_options() {
     return "disable_coredump=1";
 }
 
+#if defined(__linux__)
+extern "C" const char* __lsan_default_suppressions() {
+    // Work around SDL error-buffer TLS leaks on PulseAudio-owned discovery threads.
+    return "leak:AddPulseAudioDevice\n";
+}
+#endif
+
 static void Configure_Asan_Runtime_() {
     const char* base_path = SDL_GetBasePath();
     if (base_path == nullptr) {
