@@ -1,6 +1,9 @@
 #include "pch.h"
 
 #include <SDL3/SDL_main.h>
+#if defined(ORION2RE_ASAN_BUILD)
+#include <sanitizer/common_interface_defs.h>
+#endif
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
@@ -87,15 +90,36 @@ static void Shutdown_Game_Log_() {
 
 #if defined(ORION2RE_ASAN_BUILD)
 extern "C" const char* __asan_default_options() {
-    return "log_path=logs/asan:disable_coredump=1";
+    return "disable_coredump=1";
 }
 
 static void Configure_Asan_Runtime_() {
     const char* base_path = SDL_GetBasePath();
-    char logs_path[1024];
+    if (base_path == nullptr) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ASAN: unable to resolve game directory: %s", SDL_GetError());
+        return;
+    }
 
-    Build_Path_(logs_path, sizeof(logs_path), base_path, "logs");
-    SDL_CreateDirectory(logs_path);
+    char* logs_path = nullptr;
+    if (SDL_asprintf(&logs_path, "%slogs", base_path) < 0) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ASAN: unable to allocate logs path");
+        return;
+    }
+    if (!SDL_CreateDirectory(logs_path)) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ASAN: unable to create '%s': %s", logs_path, SDL_GetError());
+        SDL_free(logs_path);
+        return;
+    }
+
+    char* report_path = nullptr;
+    if (SDL_asprintf(&report_path, "%s/asan", logs_path) >= 0) {
+        // Set the runtime path directly; environment options were read before main.
+        __sanitizer_set_report_path(report_path);
+        SDL_free(report_path);
+    } else {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ASAN: unable to allocate report path");
+    }
+    SDL_free(logs_path);
 }
 #endif
 
