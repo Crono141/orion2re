@@ -213,8 +213,9 @@ namespace ERIC {
             return false;
         }
 
+        const uint8_t* bytes = (const uint8_t*)list;
         for (uint16_t i = 0; i < count; ++i) {
-            if (list[i] == value) {
+            if (unaligned::Load<int16_t>(bytes + i * sizeof(int16_t)) == value) {
                 return true;
             }
         }
