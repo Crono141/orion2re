@@ -757,7 +757,8 @@ namespace PLNTSUM {
         planet_summary = (s_plntsum_planet*)allocate::Allocate_Next_Block(MOX::screen_seg, sizeof(*planet_summary) * MAX_PLANETS);
         memset(planet_summary, 0xFF, sizeof(*planet_summary) * MAX_PLANETS);
 
-        screen = (s_plntsum_screen*)allocate::Allocate_Next_Block(MOX::screen_seg, sizeof(*screen));
+        screen = (s_plntsum_screen*)allocate::Allocate_Next_Block_Aligned(
+            MOX::screen_seg, sizeof(*screen), alignof(s_plntsum_screen));
         memset(screen, 0, sizeof(*screen));
 
         ship_summary = (s_plntsum_ship*)allocate::Allocate_Next_Block(MOX::screen_seg, sizeof(*ship_summary) * MAX_SHIPS);
@@ -1987,9 +1988,8 @@ namespace PLNTSUM {
         MOX::scroll_bar->type = 2;
         MOX::scroll_bar->row_step = 1;
 
-        p_rotating_planet = (s_animation_header**)allocate::Allocate_Next_Block(
-            MOX::screen_seg,
-            sizeof(*p_rotating_planet) * PLANET_PICTURE_COUNT);
+        p_rotating_planet = (s_animation_header**)allocate::Allocate_Next_Block_Aligned(
+            MOX::screen_seg, sizeof(*p_rotating_planet) * PLANET_PICTURE_COUNT, alignof(s_animation_header*));
         Load_Planet_Pictures();
         Determine_Button_Status();
 
