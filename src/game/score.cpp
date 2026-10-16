@@ -1149,12 +1149,19 @@ namespace SCORE {
                 for (int16_t j = 0; j < (int16_t)num_to_draw; ++j) {
                     if (SCORE::hi->reg_pop >= 16) break;
 
+                    auto& pop_unit = SCORE::hi->pop_units[SCORE::hi->reg_pop];
+                    int16_t colony_idx = pop_unit.race_id;
+                    int16_t pop_idx = pop_unit.icon_id;
+
                     SCORE::Get_From_Tmp_Pop(
                         temp_buffer,
                         race_id,
                         population_limit,
-                        &SCORE::hi->pop_units[SCORE::hi->reg_pop].race_id,
-                        &SCORE::hi->pop_units[SCORE::hi->reg_pop].icon_id);
+                        &colony_idx,
+                        &pop_idx);
+
+                    pop_unit.race_id = colony_idx;
+                    pop_unit.icon_id = pop_idx;
 
                     SCORE::hi->reg_pop++;
                 }
