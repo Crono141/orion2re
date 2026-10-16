@@ -2189,16 +2189,19 @@ namespace EVENTS {
                 break;
             case EVENT_INDUSTRIAL_ACCIDENT:
                 event_subtype = 0;
+                planet_idx = event_data[event_id].target_id;
                 p11 = MOX::planet[event_data[event_id].target_id].star_index;
                 break;
             case EVENT_MINERAL_DEPLETION:
                 p8 = player_idx;
                 event_subtype = 0;
+                planet_idx = event_data[event_id].target_id;
                 p11 = MOX::planet[event_data[event_id].target_id].star_index;
                 p4 = MOX::planet[event_data[event_id].target_id].mineral_class;
                 break;
             case EVENT_MINERAL_DEPOSIT:
                 event_subtype = 0;
+                planet_idx = event_data[event_id].target_id;
                 p11 = MOX::planet[event_data[event_id].target_id].star_index;
                 p4 = MOX::planet[event_data[event_id].target_id].mineral_class;
                 break;

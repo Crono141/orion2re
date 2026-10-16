@@ -67,6 +67,59 @@ DOCTEST_TEST_CASE("monster reports use preserved planet identity safely") {
     DOCTEST_CHECK(strcmp(message, "Target ") == 0);
 }
 
+DOCTEST_TEST_CASE("planet event reports preserve vanilla and v150 location tokens") {
+    TEST_EVENTS::Reset_();
+    MOX::PLAYER_NUM = 0;
+    MOX::colony[0].planet = 188;
+    MOX::colony[3].planet = 193;
+    MOX::planet[193].colony_index = 3;
+    MOX::planet[193].star_index = 54;
+    MOX::planet[193].mineral_class = MINERAL_RESOURCE_ULTRA_RICH;
+    strlcpy(MOX::star[54].name, "Gnol", sizeof(MOX::star[54].name));
+    strlcpy(MOX::player[2].race_name, "Gnolam", sizeof(MOX::player[2].race_name));
+    char mineral_name[] = "Ultra Rich";
+    MOX::mineral_class_string[MINERAL_RESOURCE_ULTRA_RICH] = mineral_name;
+    int16_t event_id = EVENT_MINERAL_DEPOSIT;
+    const char* vanilla_text = "Workers in \x8F\x90 Empire discovered a previously unknown deposit of minerals on %s that improved the mineral classification of that planet to \x8C.";
+    const char* patched_text = vanilla_text;
+    const char* vanilla_expected = "Workers in Gnolam Empire discovered a previously unknown deposit of minerals on %s that improved the mineral classification of that planet to Ultra Rich.";
+    const char* patched_expected = vanilla_expected;
+    DOCTEST_SUBCASE("mineral deposit") {
+    }
+    DOCTEST_SUBCASE("mineral depletion") {
+        event_id = EVENT_MINERAL_DEPLETION;
+        vanilla_text = "Due to overworking by \x90 miners, the mineral classification of %s colony was lowered to \x8C.";
+        patched_text = vanilla_text;
+        vanilla_expected = "Due to overworking by Gnolam miners, the mineral classification of %s colony was lowered to Ultra Rich.";
+        patched_expected = vanilla_expected;
+    }
+    DOCTEST_SUBCASE("industrial accident") {
+        event_id = EVENT_INDUSTRIAL_ACCIDENT;
+        vanilla_text = "A major industrial accident on %s has irradiated the entire planet. The intense radiation levels threaten to kill millions of civilians in \x8F\x90 Empire.";
+        patched_text = "A major industrial accident on %s has irradiated the entire planet. The intense radiation levels have killed millions of civilians in \x8F\x90 colony.";
+        vanilla_expected = "A major industrial accident on %s has irradiated the entire planet. The intense radiation levels threaten to kill millions of civilians in Gnolam Empire.";
+        patched_expected = "A major industrial accident on %s has irradiated the entire planet. The intense radiation levels have killed millions of civilians in Gnolam colony.";
+    }
+    s_event_data& event = EVENTS::event_data[event_id];
+    event.player_idx = 2;
+    event.target_id = 193;
+    event.status = 5;
+
+    for (bool patched : {false, true}) {
+        DOCTEST_CAPTURE(patched);
+        char message[300];
+        snprintf(message, sizeof(message), patched ? patched_text : vanilla_text, patched ? "\x80" : "\x8B");
+        TEST_EVENTS::Set_Event_Message_(message);
+
+        EVENTS::Setup_Next_Event(event_id);
+
+        snprintf(message, sizeof(message), patched ? patched_expected : vanilla_expected, patched ? "Planet 193" : "Gnol");
+        DOCTEST_CHECK(strcmp(EVENTS::event_message, message) == 0);
+        DOCTEST_CHECK(event.target_id == 193);
+    }
+    MOX::mineral_class_string[MINERAL_RESOURCE_ULTRA_RICH] = nullptr;
+}
+
 DOCTEST_TEST_CASE("Donation uses the 1.50 base plus completed growth steps") {
     TEST_EVENTS::Reset_();
 
