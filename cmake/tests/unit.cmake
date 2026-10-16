@@ -791,6 +791,31 @@ orion2re_add_unit_test(test_colony_production_helpers
         tests/fakes/fake_colcalc_base_runtime.cpp
 )
 
+orion2re_add_unit_test(test_plntsum_filters
+    SOURCES
+        tests/unit/plntsum_test.cpp
+    PRODUCTION_SOURCES
+        src/game/bomb.cpp
+        src/game/compat.cpp
+        src/game/plntsum.cpp
+        src/game/harold.cpp
+        src/game/struct.cpp
+    FAKE_SOURCES
+        tests/fakes/fake_plntsum_runtime.cpp
+)
+
+if(MSVC)
+    target_compile_options(test_plntsum_filters PRIVATE /Gy)
+    target_link_options(test_plntsum_filters PRIVATE /OPT:REF)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_plntsum_filters PRIVATE -ffunction-sections -fdata-sections)
+    if(APPLE)
+        target_link_options(test_plntsum_filters PRIVATE -Wl,-dead_strip)
+    else()
+        target_link_options(test_plntsum_filters PRIVATE -Wl,--gc-sections)
+    endif()
+endif()
+
 orion2re_add_unit_test(test_colony_production_draw
     SOURCES
         tests/unit/coldraw_test.cpp
