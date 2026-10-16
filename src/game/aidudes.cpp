@@ -1131,9 +1131,9 @@ namespace aidudes {
 
                 switch (random_choice) {
                     case 0: {
-                        bool flag_34 = false;
-                        bool flag_38 = false;
-                        bool flag_2c = false;
+                        bool battlestation_candidate = false;
+                        bool star_fortress_candidate = false;
+                        bool star_base_candidate = false;
 
                         int ind_worth = AIBUILD::Industry_Worth(temp_colony);
                         if (p->surplus_bc > 5 && p->bc > 50) {
@@ -1152,7 +1152,7 @@ namespace aidudes {
                                 if (temp_colony->buildings[BUILDING_STAR_FORTRESS] == 0) {
                                     if (p->tech_applications[TECH_APP_STAR_FORTRESS] == TECH_RESEARCH_STATUS_RESEARCHED &&
                                         COLCALC::Colony_Product_Cost(MOX::colony, BUILDING_STAR_FORTRESS) <= (war_level * 2 + 31) * ind_worth) {
-                                        flag_38 = true;
+                                        star_fortress_candidate = true;
                                         ship_weights[8] = (uint16_t)(((*AIDATA::ai_star_info)[MOX::planet[temp_colony->planet].star_index].per_player[player_idx].neutral_count + 2 +
                                                                          ((*AIDATA::ai_colony_info)[i].threatened + (*AIDATA::ai_star_info)[MOX::planet[temp_colony->planet].star_index].per_player[player_idx].alliance_count) * 2) *
                                                                   2 +
@@ -1164,10 +1164,12 @@ namespace aidudes {
                                     }
                                 }
 
-                                if (temp_colony->buildings[BUILDING_BATTLESTATION] == 0) {
+                                // ORION95 0047ca47 skips all station candidates when a Fortress exists.
+                                if (temp_colony->buildings[BUILDING_STAR_FORTRESS] == 0 &&
+                                    temp_colony->buildings[BUILDING_BATTLESTATION] == 0) {
                                     if (p->tech_applications[TECH_APP_BATTLESTATION] == TECH_RESEARCH_STATUS_RESEARCHED &&
                                         COLCALC::Colony_Product_Cost(MOX::colony, BUILDING_BATTLESTATION) <= cost_threshold_1) {
-                                        flag_34 = true;
+                                        battlestation_candidate = true;
                                         ship_weights[7] = (uint16_t)(((*AIDATA::ai_colony_info)[i].threatened + (*AIDATA::ai_star_info)[MOX::planet[temp_colony->planet].star_index].per_player[player_idx].alliance_count) * 2 +
                                                               (*AIDATA::ai_star_info)[MOX::planet[temp_colony->planet].star_index].per_player[player_idx].neutral_count + 2) *
                                                 5 +
@@ -1180,7 +1182,7 @@ namespace aidudes {
                                     if (temp_colony->buildings[BUILDING_STAR_BASE] == 0) {
                                         if (p->tech_applications[TECH_APP_STAR_BASE] == TECH_RESEARCH_STATUS_RESEARCHED &&
                                             COLCALC::Colony_Product_Cost(MOX::colony, BUILDING_STAR_BASE) <= (war_level * 2 + 35) * ind_worth) {
-                                            flag_2c = true;
+                                            star_base_candidate = true;
                                             ship_weights[6] = (uint16_t)((*AIDATA::ai_colony_info)[i].threatened + (*AIDATA::ai_star_info)[MOX::planet[temp_colony->planet].star_index].per_player[player_idx].alliance_count) * 10 +
                                                 (*AIDATA::ai_star_info)[MOX::planet[temp_colony->planet].star_index].per_player[player_idx].enemy_count * 4 + 12 +
                                                 (*AIDATA::ai_star_info)[MOX::planet[temp_colony->planet].star_index].per_player[player_idx].neutral_count * 6;
@@ -1216,13 +1218,13 @@ namespace aidudes {
                                 }
                             }
                         } else {
-                            if (flag_2c) {
+                            if (star_base_candidate) {
                                 ship_weights[6] += (*AIDATA::ai_colony_info)[current_colony_idx].threatened * 7 + 2;
                             }
-                            if (flag_34) {
+                            if (battlestation_candidate) {
                                 ship_weights[7] += (*AIDATA::ai_colony_info)[current_colony_idx].threatened * 6 + 2;
                             }
-                            if (flag_38) {
+                            if (star_fortress_candidate) {
                                 ship_weights[8] += (*AIDATA::ai_colony_info)[current_colony_idx].threatened * 5 + 2;
                             }
                         }

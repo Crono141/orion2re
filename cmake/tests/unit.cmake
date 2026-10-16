@@ -662,6 +662,34 @@ orion2re_add_unit_test(test_aidudes
         tests/fakes/fake_aidudes_runtime.cpp
 )
 
+orion2re_add_unit_test(test_orbital_defense
+    SOURCES
+        tests/unit/orbital_defense_test.cpp
+    PRODUCTION_SOURCES
+        src/game/aidudes.cpp
+        src/game/colcalc_config.cpp
+        src/game/compat.cpp
+        src/game/ericnet.cpp
+        src/game/production_rules.cpp
+        src/game/special.cpp
+        src/game/sys.cpp
+    FAKE_SOURCES
+        tests/fakes/fake_ericnet_runtime.cpp
+        tests/fakes/fake_orbital_defense_runtime.cpp
+)
+
+if(MSVC)
+    target_compile_options(test_orbital_defense PRIVATE /Gy)
+    target_link_options(test_orbital_defense PRIVATE /OPT:REF)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_orbital_defense PRIVATE -ffunction-sections -fdata-sections)
+    if(APPLE)
+        target_link_options(test_orbital_defense PRIVATE -Wl,-dead_strip)
+    else()
+        target_link_options(test_orbital_defense PRIVATE -Wl,--gc-sections)
+    endif()
+endif()
+
 orion2re_add_unit_test(test_antarans
     SOURCES
         tests/unit/antarans_test.cpp
