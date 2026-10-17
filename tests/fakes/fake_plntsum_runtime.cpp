@@ -62,6 +62,7 @@ namespace TEST_PLNTSUM {
         MOX::ship_stack_count = 0;
         MOX::scanned_field = -1;
         PLNTSUM::planet_summary = summary;
+        PLNTSUM::planet_summary_true_omni = false;
         PLNTSUM::sort_choice = 0;
         PLNTSUM::filter_out_enemy_controlled_planets = 0;
         PLNTSUM::filter_out_planets_out_of_range = 0;

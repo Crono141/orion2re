@@ -36,6 +36,7 @@ set(ORION2RE_DEFAULT_CONFIG_SOURCES
     src/game/multplay_config.cpp
     src/game/newtech_config.cpp
     src/game/officer_config.cpp
+    src/game/plntsum_config.cpp
     src/game/racecust_config.cpp
     src/game/racesel_config.cpp
     src/game/report_config.cpp
@@ -828,6 +829,7 @@ orion2re_add_unit_test(test_plntsum_filters
         src/game/plntsum.cpp
         src/game/harold.cpp
         src/game/struct.cpp
+        src/game/sys.cpp
     FAKE_SOURCES
         tests/fakes/fake_plntsum_runtime.cpp
 )

@@ -649,13 +649,17 @@ namespace PLNTSUM {
     void __cdecl Set_Planet_Explored_Flags() {
         Reset_Explored_Planets();
 
-        // Galactic Lore reveals planets just as racial omniscience does.
-        bool omniscient = HAROLD::Player_Is_Omniscient(MOX::PLAYER_NUM);
-
         for (int16_t i = 0; i < (int16_t)MOX::planet_count; ++i) {
             int16_t star_idx = MOX::planet[i].star_index;
-            if (omniscient ||
-                HAROLD::Player_Has_Visited(MOX::PLAYER_NUM, star_idx)) {
+            bool explored;
+            if (planet_summary_true_omni) {
+                // In 1.50, Galactic Lore alone cannot establish absence of enemies.
+                explored = MOX::player[MOX::PLAYER_NUM].traits[TRAIT_OMNISCIENCE] != 0 ||
+                    HAROLD::Player_Has_Visited(MOX::PLAYER_NUM, star_idx);
+            } else {
+                explored = SYS::Ok_To_View_System(star_idx, MOX::PLAYER_NUM);
+            }
+            if (explored) {
                 struct_::Set_Bit_Field(PLNTSUM::explored_bitmap, i);
             }
         }
@@ -1002,7 +1006,7 @@ namespace PLNTSUM {
             if (passes_filter) {
                 if (!Planet_Has_Been_Visited(i)) {
                     passes_filter = false;
-                } else if (PLNTSUM::filter_out_enemy_controlled_planets != 0 &&
+                } else if ((!planet_summary_true_omni || PLNTSUM::filter_out_enemy_controlled_planets != 0) &&
                     !struct_::Test_Bit_Field(PLNTSUM::explored_bitmap, i)) {
                     passes_filter = false;
                 }
