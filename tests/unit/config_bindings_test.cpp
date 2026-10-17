@@ -48,7 +48,6 @@
 #include "game/newpup.h"
 #include "game/npcdiplo.h"
 #include "game/officer.h"
-#include "game/plntsum.h"
 #include "game/report.h"
 #include "game/racecust.h"
 #include "game/raceopt.h"
@@ -1034,41 +1033,10 @@ DOCTEST_TEST_CASE("interface and colony formula settings preserve 1.50 defaults"
         "economy ship_scrap_refund_percent = 30;", &writes, &diagnostic));
 }
 
-DOCTEST_TEST_CASE("planet summary true omniscience defaults to vanilla and can be reset") {
-    config::s_config_state state;
-    DOCTEST_REQUIRE(config::Initialize_Defaults(&state));
-    DOCTEST_REQUIRE(config::Commit_State(&state));
-    DOCTEST_CHECK_FALSE(PLNTSUM::planet_summary_true_omni);
-
-    config::s_config_write_set writes;
-    config::s_cfg_diagnostic diagnostic;
-    DOCTEST_REQUIRE(Append_Decoded_(
-        "interface planet_summary_true_omni = true;", &writes, &diagnostic));
-    DOCTEST_REQUIRE(config::Apply_Write_Set(&writes, &state, &diagnostic));
-    DOCTEST_REQUIRE(config::Commit_State(&state));
-    DOCTEST_CHECK(PLNTSUM::planet_summary_true_omni);
-
-    writes.writes.clear();
-    DOCTEST_REQUIRE(Append_Decoded_(
-        "interface planet_summary_true_omni = false;", &writes, &diagnostic));
-    DOCTEST_REQUIRE(config::Apply_Write_Set(&writes, &state, &diagnostic));
-    DOCTEST_REQUIRE(config::Commit_State(&state));
-    DOCTEST_CHECK_FALSE(PLNTSUM::planet_summary_true_omni);
-
-    writes.writes.clear();
-    DOCTEST_CHECK_FALSE(Append_Decoded_(
-        "interface planet_summary_true_omni = 1;", &writes, &diagnostic));
-    PLNTSUM::planet_summary_true_omni = true;
-    DOCTEST_REQUIRE(config::Initialize_Defaults(&state));
-    DOCTEST_REQUIRE(config::Commit_State(&state));
-    DOCTEST_CHECK_FALSE(PLNTSUM::planet_summary_true_omni);
-}
-
 DOCTEST_TEST_CASE("local presentation settings stay out of saves and synchronization") {
     const char* paths[] = {
         "interface.allow_future_technology_browsing",
         "interface.main_menu_mod_list",
-        "interface.planet_summary_true_omni",
     };
     for (const char* path : paths) {
         const config::t_variable_id variable = Variable_Id_(path);

@@ -9701,21 +9701,6 @@
       bind_root: { header: "game/mainscr.h", symbol: "MAINSCR::main_screen_tax_rate" },
     },
 
-    planet_summary_true_omni: {
-      title: "Planet summary true omniscience",
-      description: "Uses the 1.50 exploration rule for the Planets screen's No Enemy Presence filter.",
-      remarks: "False preserves vanilla system visibility, including Galactic Lore. True requires racial Omniscience or an actual visit when No Enemy Presence is selected; Galactic Lore alone only reveals planets when that filter is off. This affects the planet list only, not visibility elsewhere.",
-      examples: ["interface planet_summary_true_omni = true;"],
-      group: "interface",
-      namespace: "interface",
-      type: "bool",
-      default: false,
-      bind_root: {
-        header: "game/plntsum.h",
-        symbol: "PLNTSUM::planet_summary_true_omni",
-      },
-    },
-
     maximum_galaxy_zoom_mode: {
       title: "Maximum galaxy zoom mode",
       description: "Selects geometric subdivision or classic display scales for Maximum-galaxy zoom levels.",

@@ -19,7 +19,6 @@ struct s_plntsum_screen {
 };
 
 namespace PLNTSUM {
-    extern bool planet_summary_true_omni;
     extern int16_t plntscrn_delta_y[9];
     extern int16_t sort_choice;
     extern int16_t filter_out_adverse_gravity_planets;

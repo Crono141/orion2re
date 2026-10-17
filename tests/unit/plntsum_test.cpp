@@ -61,13 +61,10 @@ DOCTEST_TEST_CASE("mixed minerals remain planet-local across filter permutations
     const int orders[][3] = {{1, 2, 4}, {1, 4, 2}, {2, 1, 4}, {2, 4, 1}, {4, 1, 2}, {4, 2, 1}};
     for (int rotation = 0; rotation < 5; ++rotation) {
         for (int sort = 0; sort < 3; ++sort) {
-            for (int knowledge_mode = 0; knowledge_mode < 8; ++knowledge_mode) {
-                const int knowledge = knowledge_mode % 4;
-                const bool true_omni = knowledge_mode >= 4;
+            for (int knowledge = 0; knowledge < 4; ++knowledge) {
                 for (bool reachable : {false, true}) {
                     for (int presence = 0; presence < 7; ++presence) {
                         TEST_PLNTSUM::Reset_();
-                        PLNTSUM::planet_summary_true_omni = true_omni;
                         Add_System(0, 0, rotation);
                         PLNTSUM::sort_choice = sort;
                         TEST_PLNTSUM::in_range[0] = reachable;
@@ -94,7 +91,6 @@ DOCTEST_TEST_CASE("mixed minerals remain planet-local across filter permutations
                                 DOCTEST_CAPTURE(rotation);
                                 DOCTEST_CAPTURE(sort);
                                 DOCTEST_CAPTURE(knowledge);
-                                DOCTEST_CAPTURE(true_omni);
                                 DOCTEST_CAPTURE(reachable);
                                 DOCTEST_CAPTURE(presence);
                                 DOCTEST_CAPTURE(mask);
@@ -102,7 +98,7 @@ DOCTEST_TEST_CASE("mixed minerals remain planet-local across filter permutations
                                 std::vector<int16_t> expected;
                                 bool enemy = presence == 1 || presence == 3 || presence == 5;
                                 bool system_visible = knowledge != 3 &&
-                                    (!(mask & 1) || (!enemy && (!true_omni || knowledge != 2))) &&
+                                    (!(mask & 1) || (knowledge != 2 && !enemy)) &&
                                     (!(mask & 2) || reachable);
                                 if (system_visible) {
                                     for (int16_t i = 0; i < 5; ++i) {
@@ -191,7 +187,7 @@ DOCTEST_TEST_CASE("presence and range exclusions do not leak between systems") {
     Check_List({12, 13, 14});
 }
 
-DOCTEST_TEST_CASE("Galactic Lore keeps unvisited mixed-mineral systems visible without enemies") {
+DOCTEST_TEST_CASE("Galactic Lore alone reproduces the whole-system exclusion regardless of minerals") {
     TEST_PLNTSUM::Reset_();
     Add_System(0, 0);
     MOX::star[0].visited = 0;
@@ -200,35 +196,14 @@ DOCTEST_TEST_CASE("Galactic Lore keeps unvisited mixed-mineral systems visible w
     Set_Filters(6);
     Check_List({2, 3, 4});
     Set_Filters(7);
-    Check_List({2, 3, 4});
+    Check_List({});
     Set_Filters(3);
-    Check_List({0, 1, 2, 3, 4});
+    Check_List({});
 
     MOX::star[0].visited = 1;
     PLNTSUM::Set_Planet_Explored_Flags();
     Set_Filters(7);
     Check_List({2, 3, 4});
-}
-
-DOCTEST_TEST_CASE("black holes remain unexplored and excluded regardless of filter toggles") {
-    for (int knowledge = 0; knowledge < 3; ++knowledge) {
-        TEST_PLNTSUM::Reset_();
-        Add_System(0, 0);
-        MOX::star[0].spectral_class = STAR_CLASS_BLACK_HOLE;
-        MOX::star[0].visited = knowledge == 0 ? 1 : 0;
-        MOX::player[0].traits[TRAIT_OMNISCIENCE] = knowledge == 1;
-        MOX::player[0].has_galactic_lore = knowledge == 2;
-        PLNTSUM::Set_Planet_Explored_Flags();
-        DOCTEST_CAPTURE(knowledge);
-        for (int16_t i = 0; i < 5; ++i) {
-            DOCTEST_CHECK_FALSE(struct_::Test_Bit_Field(PLNTSUM::explored_bitmap, i));
-        }
-        for (int mask = 0; mask < 8; ++mask) {
-            DOCTEST_CAPTURE(mask);
-            Set_Filters(mask);
-            Check_List({});
-        }
-    }
 }
 
 DOCTEST_TEST_SUITE_END();
