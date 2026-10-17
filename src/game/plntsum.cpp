@@ -649,12 +649,12 @@ namespace PLNTSUM {
     void __cdecl Set_Planet_Explored_Flags() {
         Reset_Explored_Planets();
 
-        bool has_omniscience_trait =
-            MOX::player[MOX::PLAYER_NUM].traits[TRAIT_OMNISCIENCE] != 0;
+        // Galactic Lore reveals planets just as racial omniscience does.
+        bool omniscient = HAROLD::Player_Is_Omniscient(MOX::PLAYER_NUM);
 
         for (int16_t i = 0; i < (int16_t)MOX::planet_count; ++i) {
             int16_t star_idx = MOX::planet[i].star_index;
-            if (has_omniscience_trait ||
+            if (omniscient ||
                 HAROLD::Player_Has_Visited(MOX::PLAYER_NUM, star_idx)) {
                 struct_::Set_Bit_Field(PLNTSUM::explored_bitmap, i);
             }

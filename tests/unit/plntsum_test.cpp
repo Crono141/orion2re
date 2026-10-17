@@ -98,7 +98,7 @@ DOCTEST_TEST_CASE("mixed minerals remain planet-local across filter permutations
                                 std::vector<int16_t> expected;
                                 bool enemy = presence == 1 || presence == 3 || presence == 5;
                                 bool system_visible = knowledge != 3 &&
-                                    (!(mask & 1) || (knowledge != 2 && !enemy)) &&
+                                    (!(mask & 1) || !enemy) &&
                                     (!(mask & 2) || reachable);
                                 if (system_visible) {
                                     for (int16_t i = 0; i < 5; ++i) {
@@ -187,7 +187,7 @@ DOCTEST_TEST_CASE("presence and range exclusions do not leak between systems") {
     Check_List({12, 13, 14});
 }
 
-DOCTEST_TEST_CASE("Galactic Lore alone reproduces the whole-system exclusion regardless of minerals") {
+DOCTEST_TEST_CASE("Galactic Lore keeps unvisited mixed-mineral systems visible without enemies") {
     TEST_PLNTSUM::Reset_();
     Add_System(0, 0);
     MOX::star[0].visited = 0;
@@ -196,9 +196,9 @@ DOCTEST_TEST_CASE("Galactic Lore alone reproduces the whole-system exclusion reg
     Set_Filters(6);
     Check_List({2, 3, 4});
     Set_Filters(7);
-    Check_List({});
+    Check_List({2, 3, 4});
     Set_Filters(3);
-    Check_List({});
+    Check_List({0, 1, 2, 3, 4});
 
     MOX::star[0].visited = 1;
     PLNTSUM::Set_Planet_Explored_Flags();
