@@ -18,6 +18,7 @@
 #include <unistd.h>
 #endif
 
+#if defined(ORION2RE_DEBUG_BUILD)
 static void Build_Path_(char* output, size_t output_size, const char* base_path, const char* relative_path) {
     if (base_path != nullptr && base_path[0] != '\0') {
         snprintf(output, output_size, "%s%s", base_path, relative_path);
@@ -54,8 +55,10 @@ static void SDLCALL Game_Log_Output_(void* userdata, int category, SDL_LogPriori
         fflush(log_file);
     }
 }
+#endif
 
 static void Configure_Game_Log_() {
+#if defined(ORION2RE_DEBUG_BUILD)
     const char* base_path = SDL_GetBasePath();
     char logs_path[1024];
     char log_file_path[1024];
@@ -77,9 +80,11 @@ static void Configure_Game_Log_() {
         SDL_GetLogOutputFunction(&_console_log_output, &_console_log_userdata);
         SDL_SetLogOutputFunction(Game_Log_Output_, _game_log_file);
     }
+#endif
 }
 
 static void Shutdown_Game_Log_() {
+#if defined(ORION2RE_DEBUG_BUILD)
     if (_game_log_file == nullptr) {
         return;
     }
@@ -87,6 +92,7 @@ static void Shutdown_Game_Log_() {
     SDL_SetLogOutputFunction(_console_log_output, _console_log_userdata);
     fclose(_game_log_file);
     _game_log_file = nullptr;
+#endif
 }
 
 #if defined(ORION2RE_ASAN_BUILD)
