@@ -18,7 +18,10 @@ namespace {
     s_ship_data ships[MAX_SHIPS];
     s_colony colonies[1];
     s_player players[MAX_PLAYERS];
-    s_qship qcombat_data[3];
+    s_qship qcombat_data[MAX_SHIPS + 1];
+    uint32_t random_result;
+    uint32_t random_bound;
+    int random_calls;
     int allocation_count;
     int16_t beam_damage_adjustment;
     int beam_damage_calls;
@@ -51,6 +54,10 @@ namespace TEST_BOMBARDMENT_AMMO {
         MOX::qcombat_data = ::qcombat_data;
         MOX::combat_total_ship_count = 2;
         MOX::cmbt_colony_id = -1;
+        MOX::combat_attacker_player = kAttacker;
+        random_result = 1;
+        random_bound = 0;
+        random_calls = 0;
         CMBTMIS::missile_defense.tachyon_scanner = 20;
         CMBTMIS::missile_defense.neutron_scanner = 40;
         CMBTMIS::missile_defense.sensors = 70;
@@ -110,8 +117,10 @@ namespace TECHDATA {
 } // namespace TECHDATA
 
 namespace game_random {
-    uint32_t __cdecl Random(uint32_t) {
-        return 1;
+    uint32_t __cdecl Random(uint32_t bound) {
+        random_bound = bound;
+        ++random_calls;
+        return random_result;
     }
 } // namespace game_random
 
@@ -252,6 +261,66 @@ DOCTEST_TEST_CASE("tactical bombardment enforces ship caps without counting supp
         DOCTEST_CHECK(combat_data[limit + 1].weapons[0].count == 0);
     }
     TEST_BOMBARDMENT_AMMO::Reset_();
+}
+
+DOCTEST_TEST_CASE("strategic target selection supports expanded fleets with one RNG draw") {
+    const int16_t enemy_counts[] = {1, 502, 503, 1141, MAX_SHIPS - 1};
+    for (int16_t enemy_count : enemy_counts) {
+        TEST_BOMBARDMENT_AMMO::Reset_();
+        qcombat_data[1].player = kAttacker;
+        MOX::combat_total_ship_count = enemy_count + 2;
+        for (int16_t i = 2; i < MOX::combat_total_ship_count; ++i) {
+            qcombat_data[i].player = 1;
+        }
+
+        const uint32_t selections[] = {1, static_cast<uint32_t>(enemy_count / 2 + 1), static_cast<uint32_t>(enemy_count)};
+        for (uint32_t selection : selections) {
+            random_result = selection;
+            random_calls = 0;
+
+            DOCTEST_CHECK(COMBAT::QGet_Target(1) == selection + 1);
+            DOCTEST_CHECK(random_bound == enemy_count);
+            DOCTEST_CHECK(random_calls == 1);
+        }
+    }
+}
+
+DOCTEST_TEST_CASE("strategic target selection preserves eligible target order") {
+    TEST_BOMBARDMENT_AMMO::Reset_();
+    MOX::combat_total_ship_count = 8;
+    MOX::cmbt_colony_id = 0;
+    qcombat_data[1].player = kAttacker;
+    qcombat_data[2].player = kAttacker;
+    qcombat_data[3].status = 1;
+    qcombat_data[5].status = 2;
+    qcombat_data[6].player = kAttacker;
+    const int16_t expected_targets[] = {4, 7};
+
+    for (uint32_t selection = 1; selection <= 2; ++selection) {
+        random_result = selection;
+        random_calls = 0;
+
+        DOCTEST_CHECK(COMBAT::QGet_Target(1) == expected_targets[selection - 1]);
+        DOCTEST_CHECK(random_bound == 2);
+        DOCTEST_CHECK(random_calls == 1);
+    }
+}
+
+DOCTEST_TEST_CASE("strategic target selection falls back to colony only for attacker") {
+    TEST_BOMBARDMENT_AMMO::Reset_();
+    qcombat_data[1].player = kAttacker;
+
+    DOCTEST_CHECK(COMBAT::QGet_Target(1) == -1);
+    MOX::cmbt_colony_id = 0;
+    DOCTEST_CHECK(COMBAT::QGet_Target(1) == 0);
+    qcombat_data[0].status = 1;
+    DOCTEST_CHECK(COMBAT::QGet_Target(1) == -1);
+    qcombat_data[0].status = 2;
+    DOCTEST_CHECK(COMBAT::QGet_Target(1) == -1);
+    qcombat_data[0].status = 0;
+    qcombat_data[1].player = 1;
+    DOCTEST_CHECK(COMBAT::QGet_Target(1) == -1);
+    DOCTEST_CHECK(random_calls == 0);
 }
 
 DOCTEST_TEST_CASE("strategic attacks use strategic weapon damage") {
