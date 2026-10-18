@@ -365,13 +365,15 @@ For example a planet has a Radiation shield, no defensive buildings, and its ow
 
 ### Missing Loknar’s Technologies
 
-The two extra technologies that Loknar brings (added in patch version 1.3), in addition to Death Ray and the three random Xenon techs, are now displayed.
+The two extra technologies that Loknar brings (a feature added in patch version 1.3), in addition to Death Ray and the three random Xenon techs, are now displayed.
 
 ![Loknar technology reward display](../../assets/images/manual/image22.png)
 
-These two techs are chosen randomly from the tech list: First tech from techs 1-101; Second tech from techs 102-203. This could result in a selection of one or both techs already in your possession. In such a case the technology is not listed and you will not receive another tech instead.
+These two techs are chosen randomly from the full tech list: First tech from techs 1-101; Second tech from techs 102-203.
 
-Note that this selection is made before the Xenon techs are given and in the rare case where the Death Ray is one of the two techs, you will not receive another Xenon tech instead of the default Death Ray technology.
+This could result in a selection of one or both techs already in your possession. In such a case the technology is not listed and you will not receive another tech instead.
+
+Note also that the selection is made before the Xenon techs are given and in the rare case where the Death Ray is one of the two selected techs, you will not receive another Xenon tech instead.
 
 
 ### Evolutionary Mutation Screen Bug \*
