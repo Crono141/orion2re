@@ -218,6 +218,47 @@ DOCTEST_TEST_CASE("planet trimming does not protect star zero when Orion is disa
     MAPGEN::special_generation_config.generate_orion = 1;
 }
 
+DOCTEST_TEST_CASE("configured planet threshold allows crowded classic galaxies") {
+    struct s_case {
+        int16_t stars;
+        int16_t limit;
+        int16_t retained;
+    };
+    const s_case cases[] = {
+        {20, 250, 100},
+        {55, 250, 249},
+        {55, 260, 259},
+        {55, 400, 275},
+        {55, 0, 275},
+        {72, 250, 249},
+        {72, 400, 360},
+        {72, 0, 360},
+        {73, 250, 365},
+    };
+
+    for (const s_case& test_case : cases) {
+        TEST_MAPGEN::Reset_();
+        MOX::NUM_STARS = test_case.stars;
+        MOX::NUM_PLAYERS = 0;
+        MAPGEN::planet_limit = test_case.limit;
+        MOX::planet_count = test_case.stars * 5;
+        for (int16_t planet = 0; planet < MOX::planet_count; ++planet) {
+            TEST_MAPGEN::Set_Planet_(
+                planet, planet / 5, planet % 5, PLANET_TYPE_PLANET, -1);
+        }
+
+        MAPGEN::Enforce_Configured_Planet_Max();
+
+        DOCTEST_CHECK(MOX::planet_count == test_case.retained);
+        for (int16_t planet = 0; planet < MOX::planet_count; ++planet) {
+            const s_planet_data& body = MOX::planet[planet];
+            DOCTEST_CHECK(
+                (MOX::star[body.star_index].planet_index[body.orbit] == planet));
+        }
+    }
+    MAPGEN::planet_limit = 250;
+}
+
 DOCTEST_TEST_CASE("forced food climate retries the configured weighted distribution") {
     TEST_MAPGEN::Reset_();
     MOX::g_galaxy_age = GALAXY_AGE_YOUNG;

@@ -5,8 +5,6 @@
 
 namespace INITGAME {
 
-    constexpr int16_t LEGACY_PLANET_LIMIT = 250;
-
     static uint32_t Starting_Money() {
         const int civilization_level =
             MOX::settings.starting_civilization_level;
@@ -193,10 +191,7 @@ namespace INITGAME {
                 video::Set_Page_Off();
                 graphics::Fill(0, 0, 0x27F, 0x1DF, 0);
                 platform::Toggle_Pages_Stub();
-                int16_t planet_limit = MOX::NUM_STARS <= ORIGINAL_MAX_STARS
-                    ? LEGACY_PLANET_LIMIT
-                    : MAX_PLANETS;
-                MAPGEN::Enforce_Planet_Max(planet_limit);
+                MAPGEN::Enforce_Configured_Planet_Max();
                 MAPGEN::Set_Black_Hole_Visited_Flags();
                 HAROLD::Confirm_Planet_And_Star_Index_Link(HAROLD::s_after_home_world_gen);
 

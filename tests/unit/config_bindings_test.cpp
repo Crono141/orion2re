@@ -6941,6 +6941,34 @@ DOCTEST_TEST_CASE("maximum galaxy star count binds through the canonical map tab
         "map star_count maximum = 1024;", &writes, &diagnostic));
 }
 
+DOCTEST_TEST_CASE("map planet limit supports raised and disabled thresholds") {
+    config::s_config_state state;
+    DOCTEST_REQUIRE(config::Initialize_Defaults(&state));
+    DOCTEST_REQUIRE(config::Commit_State(&state));
+    DOCTEST_CHECK(MAPGEN::planet_limit == 250);
+
+    const int limits[] = {400, 0, 5120};
+    for (int limit : limits) {
+        config::s_config_write_set writes;
+        config::s_cfg_diagnostic diagnostic;
+        const std::string assignment =
+            "map planet_limit = " + std::to_string(limit) + ";";
+        DOCTEST_REQUIRE(Append_Decoded_(
+            assignment.c_str(), &writes, &diagnostic));
+        DOCTEST_REQUIRE(config::Apply_Write_Set(&writes, &state, &diagnostic));
+        DOCTEST_REQUIRE(config::Commit_State(&state));
+        DOCTEST_CHECK(MAPGEN::planet_limit == limit);
+    }
+
+    config::s_config_write_set writes;
+    config::s_cfg_diagnostic diagnostic;
+    DOCTEST_CHECK_FALSE(Append_Decoded_(
+        "map planet_limit = -1;", &writes, &diagnostic));
+    DOCTEST_CHECK_FALSE(Append_Decoded_(
+        "map planet_limit = 5121;", &writes, &diagnostic));
+    MAPGEN::planet_limit = 250;
+}
+
 DOCTEST_TEST_CASE("descriptive map settings bind native generation policy") {
     config::s_config_state state;
     DOCTEST_REQUIRE(config::Initialize_Defaults(&state));

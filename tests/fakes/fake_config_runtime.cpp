@@ -175,6 +175,7 @@ namespace MAPGEN {
     s_special_generation_config special_generation_config = {1, 1, 1, 1, 1, 1};
     s_monster_generation_config monster_generation_config = {
         255, 0, 0, 0, {5, 5, 5, 8, 12}, 20};
+    int16_t planet_limit = 250;
     uint8_t starting_reveal_radius;
     uint8_t star_visual_size_weight[3] = {3, 4, 3};
     s_nebula_count_config nebula_count[GALAXY_SIZE_COUNT] = {
