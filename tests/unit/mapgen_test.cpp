@@ -178,7 +178,7 @@ DOCTEST_TEST_CASE("planet trimming preserves generated Orion and compacted refer
 
     MAPGEN::Enforce_Planet_Max(5);
 
-    DOCTEST_CHECK(MOX::planet_count == 5);
+    DOCTEST_CHECK(MOX::planet_count == 4);
     DOCTEST_CHECK(MOX::planet[0].star_index == 0);
     DOCTEST_CHECK(MOX::planet[0].planet_special == SYSTEM_SPECIAL_ORION_STAR);
     DOCTEST_CHECK(MOX::star[0].system_special == SYSTEM_SPECIAL_ORION_STAR);
@@ -190,8 +190,59 @@ DOCTEST_TEST_CASE("planet trimming preserves generated Orion and compacted refer
     DOCTEST_CHECK((MOX::star[2].planet_index[1] == 2));
     DOCTEST_CHECK((MOX::star[3].planet_index[0] == 3));
     DOCTEST_CHECK((MOX::star[1].planet_index[0] == -1));
-    DOCTEST_CHECK((MOX::star[1].planet_index[1] == 4));
-    DOCTEST_CHECK(MOX::planet[4].planet_type == PLANET_TYPE_GAS_GIANT);
+    DOCTEST_CHECK((MOX::star[1].planet_index[1] == -1));
+}
+
+DOCTEST_TEST_CASE("planet trimming counts and removes gas giants at the threshold") {
+    for (int16_t limit : {2, 3, 4}) {
+        TEST_MAPGEN::Reset_();
+        MOX::NUM_STARS = 3;
+        MOX::NUM_PLAYERS = 1;
+        MAPGEN::special_generation_config.generate_orion = 1;
+        TEST_MAPGEN::Set_Planet_(0, 1, 1, PLANET_TYPE_GAS_GIANT, -1);
+        TEST_MAPGEN::Set_Planet_(1, 2, 0, PLANET_TYPE_PLANET, 0);
+        TEST_MAPGEN::Set_Planet_(2, 2, 1, PLANET_TYPE_ASTEROID, -1);
+        MOX::planet_count = 3;
+        MOX::player[0].home_planet_id = 1;
+        MOX::colony[0].planet = 1;
+
+        MAPGEN::Enforce_Planet_Max(limit);
+
+        const bool trimmed = limit <= 3;
+        DOCTEST_CHECK(MOX::planet_count == (trimmed ? 2 : 3));
+        DOCTEST_CHECK((MOX::star[1].planet_index[1] == (trimmed ? -1 : 0)));
+        DOCTEST_CHECK((MOX::player[0].home_planet_id == (trimmed ? 0 : 1)));
+        DOCTEST_CHECK(MOX::colony[0].planet == (trimmed ? 0 : 1));
+        DOCTEST_CHECK(TEST_MAPGEN::Random_Calls_() == (trimmed ? 1 : 0));
+    }
+}
+
+DOCTEST_TEST_CASE("planet trimming retains gas giants in protected systems") {
+    TEST_MAPGEN::Reset_();
+    MOX::NUM_STARS = 4;
+    MOX::NUM_PLAYERS = 1;
+    MAPGEN::special_generation_config.generate_orion = 1;
+    TEST_MAPGEN::Set_Planet_(0, 3, 1, PLANET_TYPE_GAS_GIANT, -1);
+    TEST_MAPGEN::Set_Planet_(1, 0, 1, PLANET_TYPE_GAS_GIANT, -1);
+    TEST_MAPGEN::Set_Planet_(2, 1, 0, PLANET_TYPE_PLANET, 0);
+    TEST_MAPGEN::Set_Planet_(3, 1, 1, PLANET_TYPE_GAS_GIANT, -1);
+    TEST_MAPGEN::Set_Planet_(4, 2, 0, PLANET_TYPE_PLANET, -1);
+    TEST_MAPGEN::Set_Planet_(5, 2, 1, PLANET_TYPE_GAS_GIANT, -1);
+    MOX::planet_count = 6;
+    MOX::player[0].home_planet_id = 2;
+    MOX::colony[0].planet = 2;
+    TEST_MAPGEN::Set_Food_Star_(2);
+
+    MAPGEN::Enforce_Planet_Max(2);
+
+    DOCTEST_CHECK(MOX::planet_count == 5);
+    DOCTEST_CHECK((MOX::star[3].planet_index[1] == -1));
+    DOCTEST_CHECK((MOX::star[0].planet_index[1] == 0));
+    DOCTEST_CHECK((MOX::star[1].planet_index[1] == 2));
+    DOCTEST_CHECK((MOX::star[2].planet_index[1] == 4));
+    DOCTEST_CHECK((MOX::player[0].home_planet_id == 1));
+    DOCTEST_CHECK(MOX::colony[0].planet == 1);
+    DOCTEST_CHECK(TEST_MAPGEN::Random_Calls_() == 1);
 }
 
 DOCTEST_TEST_CASE("planet trimming does not protect star zero when Orion is disabled") {
@@ -226,6 +277,8 @@ DOCTEST_TEST_CASE("configured planet threshold allows crowded classic galaxies")
     };
     const s_case cases[] = {
         {20, 250, 100},
+        {49, 250, 245},
+        {50, 250, 249},
         {55, 250, 249},
         {55, 260, 259},
         {55, 400, 275},
@@ -243,8 +296,13 @@ DOCTEST_TEST_CASE("configured planet threshold allows crowded classic galaxies")
         MAPGEN::planet_limit = test_case.limit;
         MOX::planet_count = test_case.stars * 5;
         for (int16_t planet = 0; planet < MOX::planet_count; ++planet) {
+            const int8_t types[] = {
+                PLANET_TYPE_PLANET,
+                PLANET_TYPE_GAS_GIANT,
+                PLANET_TYPE_ASTEROID,
+            };
             TEST_MAPGEN::Set_Planet_(
-                planet, planet / 5, planet % 5, PLANET_TYPE_PLANET, -1);
+                planet, planet / 5, planet % 5, types[planet % 3], -1);
         }
 
         MAPGEN::Enforce_Configured_Planet_Max();

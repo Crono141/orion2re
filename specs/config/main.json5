@@ -5902,8 +5902,8 @@
     },
     planet_limit: {
       title: "Planet trimming threshold",
-      description: "Sets the planet and asteroid-belt trimming threshold for galaxies with up to 72 total stars. Gas giants do not count. Zero disables this trimming pass.",
-      remarks: "Defaults to 250. To preserve legacy generation, reaching the threshold triggers trimming until the count is below it or no removable objects remain. Home systems, Orion, and required added food-world systems are protected. Galaxies with more than 72 stars use the extended planet capacity instead. This does not change the five-satellite limit per system.",
+      description: "Sets the combined planet, asteroid-belt, and gas-giant trimming threshold for galaxies with up to 72 total stars. Zero disables this trimming pass.",
+      remarks: "Defaults to 250. Matching MOO2 1.50, all three satellite types count and are eligible for removal; reaching the threshold triggers trimming until the count is below it or no removable objects remain. Home systems, Orion, and required added food-world systems are protected. Galaxies with more than 72 stars use the extended planet capacity instead. This does not change the five-satellite limit per system.",
       examples: ["map planet_limit = 0;", "map planet_limit = 400;"],
       group: "gameplay", namespace: "map", type: "int16",
       constraints: { min: 0, max: 5120 },
