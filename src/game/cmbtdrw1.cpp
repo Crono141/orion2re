@@ -3332,7 +3332,9 @@ namespace CMBTDRW1 {
             player_idx = MOX::global_combat_data.owner;
             if (player_idx < 9) {
                 if (MOX::global_combat_data.officer_idx == -1) {
-                    animate::Draw(view_x + 0xF6, view_y + 0x27, (s_animation_header*)MOX::detail_fleet_icon_seg);
+                    if (player_idx < MAX_PLAYERS) {
+                        animate::Draw(view_x + 0xF6, view_y + 0x27, (s_animation_header*)MOX::detail_fleet_icon_seg);
+                    }
                 } else {
                     for (int32_t i = 0; i < 0x20; ++i) {
                         grayscale_table[i] = static_cast<uint8_t>(i);
