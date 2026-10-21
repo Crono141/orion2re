@@ -1161,6 +1161,25 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     endif()
 endif()
 
+orion2re_add_unit_test(test_colgcbt
+    SOURCES
+        tests/unit/colgcbt_test.cpp
+    PRODUCTION_SOURCES
+        src/game/colgcbt.cpp
+)
+
+if(MSVC)
+    target_compile_options(test_colgcbt PRIVATE /Gy)
+    target_link_options(test_colgcbt PRIVATE /OPT:REF)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_colgcbt PRIVATE -ffunction-sections -fdata-sections)
+    if(APPLE)
+        target_link_options(test_colgcbt PRIVATE -Wl,-dead_strip)
+    else()
+        target_link_options(test_colgcbt PRIVATE -Wl,--gc-sections)
+    endif()
+endif()
+
 orion2re_add_unit_test(test_ground_commando
     SOURCES
         tests/unit/invasion_test.cpp
