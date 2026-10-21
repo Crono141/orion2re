@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 #include "lua/lua_game_ship_identity.h"
 
@@ -2926,6 +2927,7 @@ namespace OFFICER {
         for (int16_t i = 0; i < 27; ++i) {
             officer_skill_name_string[i] = (char*)farload::Far_Reload_Next_Data(
                 lbx_name, 0, MOX::screen_seg, i, 1, 0x26);
+            string_overrides::Apply_String(lbx_name, i + 1, officer_skill_name_string[i], 0x26);
         }
 
         RUSS::Mox_Update();
@@ -2933,6 +2935,7 @@ namespace OFFICER {
         for (int16_t i = 0; i < 27; ++i) {
             officer_skill_description_string[i] = (char*)farload::Far_Reload_Next_Data(
                 lbx_name, 1, MOX::screen_seg, i, 1, 0xFF);
+            string_overrides::Apply_String(lbx_name, 27 + i + 1, officer_skill_description_string[i], 0xFF);
         }
     }
 

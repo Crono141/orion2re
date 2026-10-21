@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 namespace HOMEGEN {
     static void Add_Planet_To_System(int16_t star_idx) {
@@ -485,6 +486,9 @@ namespace HOMEGEN {
         }
 
         char* star_names = (char*)farload::Far_Reload_Data(MAPGEN::s_starname_lbx, 0, MOX::screen_seg, 0, 0x0D, 0x0F);
+        for (int i = 0; i < 13; ++i) {
+            string_overrides::Apply_String(MAPGEN::s_starname_lbx, i + 1, star_names + i * 15, 15);
+        }
 
         for (int16_t i = 0; i < (int16_t)MOX::NUM_PLAYERS; ++i) {
             s_player* plr = &MOX::player[i];

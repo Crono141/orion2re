@@ -225,6 +225,26 @@ DOCTEST_TEST_CASE("real resources switch repeatedly without consuming screen sto
     }
 }
 
+DOCTEST_TEST_CASE("persistent packed string tables grow beyond disk size and rebuild pointers on reload") {
+    Fixture fixture;
+    for (size_t length : {size_t(70000), size_t(90000), size_t(3)}) {
+        const std::string replacement(length, 'X');
+        const std::string sidecar = "{1:'" + replacement + "'}";
+        fixture.Write("data/estrings.json5", sidecar);
+        fixture.Write("data/hestrngs.json5", sidecar);
+        fixture.Write("data/rstring0.json5", sidecar);
+        strings::Load_Strings();
+        DOCTEST_CHECK(std::string(ESTRINGS::E_Strings(0)) == replacement);
+        DOCTEST_CHECK(std::string(ESTRINGS::E_Strings(1)) == "B1");
+        DOCTEST_CHECK(MOX::race_names[0] == ESTRINGS::E_Strings(0x285));
+        DOCTEST_CHECK(std::string(HAROLD::H_Message(0)) == replacement);
+        DOCTEST_CHECK(MOX::h_string_ix[1] == length + 1);
+        DOCTEST_CHECK(std::string(HAROLD::H_Message(1)) == "B1");
+        DOCTEST_CHECK(std::string(RUSS::russ_strings.data()) == replacement);
+        DOCTEST_CHECK(std::string(RUSS::russ_strings.data() + length + 1) == "B1");
+    }
+}
+
 DOCTEST_TEST_CASE("all mod mount and priority transitions reload strings and artwork") {
     Fixture fixture;
     CONFIG_REFRESH::Resources_Loaded();

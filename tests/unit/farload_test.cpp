@@ -11,6 +11,7 @@
 
 #include "game/buffer.h"
 #include "game/farload.h"
+#include "game/string_overrides.h"
 #include "game/vfs.h"
 
 #include "miniz.h"
@@ -21,6 +22,7 @@ namespace test_farload_buffer_detail {
     class Scoped_Test_Directory {
       public:
         Scoped_Test_Directory() {
+            string_overrides::Reset_Cache();
             const auto unique_id = std::chrono::steady_clock::now().time_since_epoch().count();
             root_path_ = fs::temp_directory_path() / ("orion2re-farload-" + std::to_string(unique_id));
             fs::create_directories(root_path_);
@@ -109,9 +111,264 @@ namespace test_farload_buffer_detail {
         std::ifstream input(full_path, std::ios::binary);
         return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     }
+
+    std::string Records(const std::vector<std::string>& strings, uint16_t size) {
+        const uint16_t count = (uint16_t)strings.size();
+        std::string result((const char*)&count, sizeof(count));
+        result.append((const char*)&size, sizeof(size));
+        for (const auto& text : strings) {
+            DOCTEST_REQUIRE(text.size() <= size);
+            result += text;
+            result.append(size - text.size(), '\0');
+        }
+        return result;
+    }
 } // namespace test_farload_buffer_detail
 
 DOCTEST_TEST_SUITE("farload buffer vfs") {
+    DOCTEST_TEST_CASE("JSON5 overrides use caller supplied logical IDs and preserve missing strings") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_Lbx_File("KENTEXT.LBX", {Records({"original"}, 100), Records({"unchanged"}, 100)});
+        test_dir.Write_File("data/overrides/kentext.json5", "{/* 2: ignored */ 1: 'caf\\u00e9 // 2: text',}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        char output[100] = {};
+        string_overrides::Load_Message("KENTEXT.LBX", 0, 0, 100, 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "caf\x82 // 2: text");
+        string_overrides::Load_Message("kentext.lbx", 1, 0, 100, 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "caf\x82 // 2: text");
+        string_overrides::Load_Message("kentext.lbx", 1, 0, 100, 2, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "unchanged");
+        farload::Farload_Data_Static("KENTEXT.LBX", 0, output, 0, 1, 100);
+        DOCTEST_CHECK(std::string(output) == "original");
+    }
+
+    DOCTEST_TEST_CASE("packed overrides resize strings and retain positional empty strings") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        std::string packed("old\0\0third\0", 11);
+        packed.append(809, '\0');
+        test_dir.Write_Lbx_File("estrings.lbx", {Records({packed}, 21000)});
+        test_dir.Write_File("data/estrings.json5", "{1: 'longer replacement', '3': '', 812: 'last'}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        std::vector<char> output(21000);
+        farload::Farload_Data_Static("estrings.lbx", 0, output.data(), 0, 1, (int32_t)output.size());
+        string_overrides::Apply_Table("estrings.lbx", &output, 812);
+        DOCTEST_CHECK(std::string(output.data()) == "longer replacement");
+        const char* cursor = output.data() + strlen(output.data()) + 1;
+        DOCTEST_CHECK(*cursor == '\0');
+        ++cursor;
+        DOCTEST_CHECK(*cursor == '\0');
+        for (int i = 2; i < 811; ++i) cursor += strlen(cursor) + 1;
+        DOCTEST_CHECK(std::string(cursor) == "last");
+    }
+
+    DOCTEST_TEST_CASE("record overrides use explicit group offsets") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_Lbx_File("skildesc.lbx", {Records({"first", "second"}, 38), Records({"description"}, 255)});
+        test_dir.Write_File("data/skildesc.json5", "{2: 'changed', 3: 'new description'}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        char output[255] = {};
+        farload::Farload_Data_Static("skildesc.lbx", 0, output, 1, 1, 38);
+        string_overrides::Apply_String("skildesc.lbx", 2, output, 38);
+        DOCTEST_CHECK(std::string(output) == "changed");
+        farload::Farload_Data_Static("skildesc.lbx", 1, output, 0, 1, 255);
+        string_overrides::Apply_String("skildesc.lbx", 3, output, 255);
+        DOCTEST_CHECK(std::string(output) == "new description");
+    }
+
+    DOCTEST_TEST_CASE("raw custom tables receive overrides before pointer parsing") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        std::string packed;
+        for (int i = 0; i < 64; ++i) packed.append("name\0\0", 6);
+        test_dir.Write_Lbx_File("racestuf.lbx", {packed});
+        test_dir.Write_File("data/racestuf.json5", "{1: 'new name', 64: 'last'}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        auto* output = string_overrides::Load_Raw_Table("racestuf.lbx", 0, nullptr, 0, 64, 1, true);
+        DOCTEST_CHECK(std::string(output) == "new name");
+        const char* cursor = output;
+        for (int i = 0; i < 63; ++i) cursor += strlen(cursor) + 1;
+        DOCTEST_CHECK(std::string(cursor) == "last");
+        std::free(output);
+    }
+
+    DOCTEST_TEST_CASE("invalid sidecars and oversized strings fail without overflowing") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_Lbx_File("shipname.lbx", {Records({"old"}, 16)});
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        for (const auto& source : {"{0:'bad'}", "{1:42}", "{1:'a', '1':'b'}", "{1:'\\u0000'}", "[]", "{", "{1:'1234567890123456'}"}) {
+            test_dir.Write_File("data/shipname.json5", source);
+            string_overrides::Reset_Cache();
+            char output[17] = {};
+            output[16] = 'X';
+            std::string diagnostic;
+            DOCTEST_CHECK_FALSE(string_overrides::Try_Apply_String("shipname.lbx", 1, output, 16, &diagnostic));
+            DOCTEST_CHECK(diagnostic.find("shipname.json5:") == 0);
+            DOCTEST_CHECK(output[16] == 'X');
+        }
+    }
+
+    DOCTEST_TEST_CASE("sidecars follow VFS precedence changes without cache resets") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_File("data/mods/text/data/custom.json5", "{1: 'package'}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        char output[32] = "original";
+        string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "original");
+        auto* transaction = vfs::Begin_Mount_Transaction();
+        std::string diagnostic;
+        DOCTEST_REQUIRE(vfs::Stage_Package_Mount(transaction, "text", &diagnostic));
+        DOCTEST_REQUIRE(vfs::Commit_Mount_Transaction(transaction));
+        string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "package");
+        test_dir.Write_File("data/overrides/custom.json5", "{1: 'local'}");
+        string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "local");
+        string_overrides::Reset_Cache();
+        DOCTEST_CHECK(std::string(output) == "local");
+        string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "local");
+
+        std::error_code error;
+        DOCTEST_REQUIRE(fs::remove(test_dir.root_path() / "data/overrides/custom.json5", error));
+        DOCTEST_REQUIRE_FALSE(error);
+        string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "package");
+        transaction = vfs::Begin_Mount_Transaction();
+        DOCTEST_REQUIRE(vfs::Commit_Mount_Transaction(transaction));
+        strlcpy(output, "original", sizeof(output));
+        string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "original");
+    }
+
+    DOCTEST_TEST_CASE("sidecar edits removal and recreation are detected by content") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_Lbx_File("custom.lbx", {Records({"original"}, 32)});
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        char output[32] = {};
+        string_overrides::Load_Message("custom.lbx", 0, 0, 32, 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "original");
+        test_dir.Write_File("data/custom.json5", "{1:'first'}");
+        string_overrides::Load_Message("custom.lbx", 0, 0, 32, 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "first");
+        std::error_code error;
+        const auto path = test_dir.root_path() / "data/custom.json5";
+        const auto timestamp = fs::last_write_time(path, error);
+        DOCTEST_REQUIRE_FALSE(error);
+        test_dir.Write_File("data/custom.json5", "{1:'other'}");
+        fs::last_write_time(path, timestamp, error);
+        DOCTEST_REQUIRE_FALSE(error);
+        for (int i = 0; i < 2; ++i) {
+            string_overrides::Load_Message("custom.lbx", 0, 0, 32, 1, output, sizeof(output));
+            DOCTEST_CHECK(std::string(output) == "other");
+        }
+        DOCTEST_REQUIRE(fs::remove(path, error));
+        DOCTEST_REQUIRE_FALSE(error);
+        string_overrides::Load_Message("custom.lbx", 0, 0, 32, 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "original");
+        test_dir.Write_File("data/custom.json5", "{1:'again'}");
+        string_overrides::Load_Message("custom.lbx", 0, 0, 32, 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "again");
+    }
+
+    DOCTEST_TEST_CASE("invalid changed sidecars never serve stale overrides") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_File("data/custom.json5", "{1:'valid'}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        char output[32] = "original";
+        string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "valid");
+        for (const auto& source : {"{1:'partial', 2:42}", ""}) {
+            test_dir.Write_File("data/custom.json5", source);
+            for (int i = 0; i < 2; ++i) {
+                strlcpy(output, "original", sizeof(output));
+                std::string diagnostic;
+                DOCTEST_CHECK_FALSE(string_overrides::Try_Apply_String("custom.lbx", 1, output, sizeof(output), &diagnostic));
+                DOCTEST_CHECK(diagnostic.find("custom.json5:") == 0);
+                DOCTEST_CHECK(std::string(output) == "original");
+            }
+        }
+        test_dir.Write_File("data/custom.json5", "{1:'fixed'}");
+        string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "fixed");
+    }
+
+    DOCTEST_TEST_CASE("sidecar cache follows ZIP contents after VFS reinitialization") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_Zip_File("data/base.zip", {{"custom.json5", "{1:'first'}"}});
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        std::vector<char> table = {'o', '\0'};
+        string_overrides::Apply_Table("custom.lbx", &table, 1);
+        DOCTEST_CHECK(std::string(table.data()) == "first");
+        vfs::Shutdown();
+        test_dir.Write_Zip_File("data/base.zip", {{"custom.json5", "{1:'other'}"}});
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        table = {'o', '\0'};
+        string_overrides::Apply_Table("custom.lbx", &table, 1);
+        DOCTEST_CHECK(std::string(table.data()) == "other");
+    }
+
+    DOCTEST_TEST_CASE("table failures are atomic and paths retain their directory") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_File("data/text/custom.json5", "{1:'replacement'}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        std::vector<char> table = {'a', '\0', 'b'};
+        const auto original = table;
+        std::string diagnostic;
+        DOCTEST_CHECK_FALSE(string_overrides::Try_Apply_Table("TEXT/CUSTOM.LBX", &table, 2, 1, false, &diagnostic));
+        DOCTEST_CHECK(diagnostic.find("unterminated") != std::string::npos);
+        DOCTEST_CHECK(table == original);
+        table.push_back('\0');
+        string_overrides::Apply_Table("custom.lbx", &table, 2);
+        DOCTEST_CHECK(std::string(table.data()) == "a");
+    }
+
+    DOCTEST_TEST_CASE("raw tables allocate their final size without overwriting neighboring pool blocks") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_Lbx_File("custom.lbx", {std::string("a\0b\0", 4)});
+        const std::string replacement(70000, 'L');
+        test_dir.Write_File("data/custom.json5", "{1:'" + replacement + "'}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        Scoped_Buffer_Pool pool(80000);
+        auto* before = (char*)allocate::Allocate_Next_Block_No_Header(pool.payload, 16);
+        memset(before, 'B', 16);
+        char* table = string_overrides::Load_Raw_Table("custom.lbx", 0, pool.payload, 2, 2);
+        DOCTEST_CHECK(std::string(table) == replacement);
+        DOCTEST_CHECK(std::string(table + replacement.size() + 1) == "b");
+        auto* after = (char*)allocate::Allocate_Next_Block_No_Header(pool.payload, 16);
+        DOCTEST_REQUIRE(after != nullptr);
+        memset(after, 'A', 16);
+        DOCTEST_CHECK(std::string(before, 16) == std::string(16, 'B'));
+        DOCTEST_CHECK(std::string(table) == replacement);
+        DOCTEST_CHECK(after >= table + replacement.size() + 3);
+    }
+
+    DOCTEST_TEST_CASE("dedicated table pools grow and can reload shorter strings") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_Lbx_File("custom.lbx", {std::string("a\0b\0", 4)});
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        void* pool = allocate::Allocate_Space(4);
+        for (size_t length : {size_t(40000), size_t(80000), size_t(2)}) {
+            const std::string replacement(length, 'X');
+            test_dir.Write_File("data/custom.json5", "{1:'" + replacement + "'}");
+            char* table = string_overrides::Reload_Raw_Table("custom.lbx", 0, &pool, 2);
+            DOCTEST_CHECK(std::string(table) == replacement);
+            DOCTEST_CHECK(std::string(table + length + 1) == "b");
+            DOCTEST_CHECK(allocate::Get_Max_Block_Space(pool) >= length + 3);
+        }
+        free((allocate::s_alloc_header*)pool - 1);
+    }
+
     DOCTEST_TEST_CASE("cache invalidation changes resource provenance without moving the arena") {
         test_farload_buffer_detail::Scoped_Test_Directory test_dir;
         test_dir.Write_File("data/TEST.LBX/000", std::string(16, 'B'));

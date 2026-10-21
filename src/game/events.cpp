@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 namespace EVENTS {
     namespace {
@@ -2414,7 +2415,7 @@ namespace EVENTS {
 
         char buffer[300];
         int16_t index = event_subtype + (event_type * 4);
-        farload::Farload_Data_Static(lbx_name, index, buffer, 0, 1, sizeof(buffer));
+        string_overrides::Load_Message(lbx_name, index, 0, sizeof(buffer), index + 1, buffer, sizeof(buffer));
 
         int16_t out_len = 0;
         char temp_str[300];

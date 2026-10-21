@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 namespace MAINPUPS {
     char* g_msg_ptr;
@@ -1127,6 +1128,7 @@ namespace MAINPUPS {
                 1,
                 0x258 /* 600 */
             );
+            string_overrides::Apply_String(ESTRINGS::E_Strings(0x170), desc_id + 1, g_msg_ptr, 600);
         }
         return g_msg_ptr;
     }

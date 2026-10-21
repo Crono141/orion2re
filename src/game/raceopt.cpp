@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 namespace raceopt {
 
@@ -437,12 +438,12 @@ namespace raceopt {
     }
 
     void __cdecl Reload_Option_Strings() {
-        char* strings_data = (char*)farload::Far_Reload_Next(
+        char* strings_data = string_overrides::Load_Raw_Table(
             "racestuf.lbx",
             (uint32_t)(uint8_t)(MOX::settings.language),
-            MOX::screen_seg);
+            MOX::screen_seg, 2, 64, 1, true);
 
-        int16_t offset = 0;
+        size_t offset = 0;
         int16_t index = 1;
 
         opt_string[0] = strings_data;

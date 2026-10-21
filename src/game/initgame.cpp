@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 #include "lua/lua_game.h"
 #include "lua/lua_game_ship_identity.h"
@@ -402,13 +403,15 @@ namespace INITGAME {
 
             allocate::Push_Block(MOX::screen_seg);
 
+            const uint32_t name_index = race_idx * 8 + game_random::Random(8) - 1;
             char* player_name = (char*)farload::Far_Reload_Next_Data(
                 "RACENAME.LBX",
                 0,
                 MOX::screen_seg,
-                race_idx * 8 + game_random::Random(8) - 1,
+                name_index,
                 1,
                 20);
+            string_overrides::Apply_String("RACENAME.LBX", name_index + 1, player_name, 20);
             RUSS::Mox_Update();
 
             allocate::Pop_Block(MOX::screen_seg);

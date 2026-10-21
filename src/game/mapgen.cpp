@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 #include "lua/lua_game.h"
 #include "lua/lua_game_internal.h"
@@ -1467,6 +1468,9 @@ namespace MAPGEN {
             RUSS::Mox_Update();
 
             name_seg = farload::Far_Reload_Data("starname.lbx", 1, MOX::screen_seg, 0, 0x33D, 0xF);
+            for (int i = 0; i < STAR_NAME_COUNT; ++i) {
+                string_overrides::Apply_String("starname.lbx", 13 + i + 1, (char*)name_seg + i * 15, 15);
+            }
             RUSS::Mox_Update();
             name_index = (uint16_t*)allocate::Allocate_Next_Block(MOX::screen_seg, 0xCF4);
             RUSS::Mox_Update();

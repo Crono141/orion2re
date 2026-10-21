@@ -961,6 +961,7 @@ orion2re_add_unit_test(test_events
         src/game/events.cpp
     FAKE_SOURCES
         tests/fakes/fake_events_runtime.cpp
+        tests/fakes/fake_string_message_loader.cpp
         tests/fakes/fake_sdl_string.cpp
 )
 
@@ -1652,6 +1653,7 @@ orion2re_add_unit_test(test_techinit
     FAKE_SOURCES
         tests/fakes/fake_arena_runtime.cpp
         tests/fakes/fake_techinit_runtime.cpp
+        tests/fakes/fake_string_table_loader.cpp
     LINK_SDL
 )
 
@@ -1917,6 +1919,9 @@ orion2re_add_unit_test(test_farload_buffer_vfs
         src/game/buffer.cpp
         src/game/compat.cpp
         src/game/farload.cpp
+        src/game/string_overrides.cpp
+        src/config/text_encoding.cpp
+        vendors/yyjson/src/yyjson.c
         src/game/vfs.cpp
         src/game/vfs_file.cpp
         src/game/vfs_lbx.cpp
@@ -1934,6 +1939,14 @@ orion2re_add_unit_test(test_farload_buffer_vfs
         miniz
     LINK_SDL
 )
+
+target_include_directories(test_farload_buffer_vfs PRIVATE "${ORION2RE_VENDORED_YYJSON_DIR}/src")
+
+foreach(TARGET_NAME IN ITEMS test_newgame test_homegen test_mapgen_planet_max
+    test_lua_mod_runtime test_refit_cost test_design_weapon_damage test_shield_table
+    test_ground_commando test_mainpups_leader_technology test_racesel_digest)
+    target_sources(${TARGET_NAME} PRIVATE tests/fakes/fake_string_overrides.cpp)
+endforeach()
 
 orion2re_add_unit_test(test_fields
     SOURCES

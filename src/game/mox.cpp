@@ -883,8 +883,8 @@ namespace MOX {
         {1, 0, 0, 421, 639, 479},
     };
     uint8_t main_palette_player_colors[MAX_PLAYERS] = {73, 98, 110, 32, 62, 148, 45, 85};
-    int16_t h_string_ix[397];
-    char h_strings[0x4074];
+    size_t h_string_ix[397];
+    std::vector<char> h_strings;
     s_help_box help_entry_list[50];
     uint8_t planet_special = 64;
     uint8_t planet_special_weighted_chance[SYSTEM_SPECIAL_COUNT] = {64, 5, 3, 2, 3, 2, 9, 4, 3, 0, 5, 0};

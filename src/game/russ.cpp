@@ -1,8 +1,9 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 namespace RUSS {
     int8_t all_ai_game;
-    char russ_strings[0x1964];
+    std::vector<char> russ_strings;
     const char s_Seed_ld[] = "Seed: %ld";
     const char s_Map_d[] = "Map:  %d";
 
@@ -95,10 +96,13 @@ namespace RUSS {
 
         snprintf(filename_buffer, sizeof(filename_buffer), "rstring%d.lbx", (uint32_t)language);
 
-        farload::Farload_Data_Static(filename_buffer, 0, &RUSS::russ_strings, 0, 1, (int32_t)sizeof(RUSS::russ_strings));
+        std::vector<char> loaded(0x1964);
+        farload::Farload_Data_Static(filename_buffer, 0, loaded.data(), 0, 1, (int32_t)loaded.size());
+        string_overrides::Apply_Table(filename_buffer, &loaded, 177);
+        russ_strings.swap(loaded);
 
         char* string_ptr;
-        string_ptr = COLCALC::Load_Colcalc_Strings(RUSS::russ_strings);
+        string_ptr = COLCALC::Load_Colcalc_Strings(RUSS::russ_strings.data());
         string_ptr = COMBFIND::Load_Combfind_Strings(string_ptr);
         string_ptr = MSG_::Load_Msg_Strings(string_ptr);
         string_ptr = NETMOX::Load_Netmox_Strings(string_ptr);

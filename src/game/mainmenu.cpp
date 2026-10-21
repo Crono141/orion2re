@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "string_overrides.h"
 
 #include <string>
 
@@ -811,12 +812,14 @@ namespace MAINMENU {
             data = (char*)farload::Far_Reload_Next_Data(path, 0, MOX::screen_seg, entry_idx++, 1, 127);
             allocate::Pop_Block(MOX::screen_seg);
             strlcpy(credits[credit_idx][0], data, sizeof(credits[credit_idx][0]));
+            string_overrides::Apply_String(path, credit_idx * 2 + 1, credits[credit_idx][0], sizeof(credits[credit_idx][0]));
 
             // Load second line of credit entry
             allocate::Push_Block(MOX::screen_seg);
             data = (char*)farload::Far_Reload_Next_Data(path, 0, MOX::screen_seg, entry_idx++, 1, 127);
             allocate::Pop_Block(MOX::screen_seg);
             strlcpy(credits[credit_idx][1], data, sizeof(credits[credit_idx][1]));
+            string_overrides::Apply_String(path, credit_idx * 2 + 2, credits[credit_idx][1], sizeof(credits[credit_idx][1]));
         }
 
         credit_num = 1;
