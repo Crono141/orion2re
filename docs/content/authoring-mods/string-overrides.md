@@ -48,8 +48,15 @@ JSON5 comments, single quotes, and trailing commas are supported. Bare decimal
 keys are an intentional extension to JSON5, which normally requires numeric keys
 to be quoted. IDs must be positive decimal integers and values must be strings;
 duplicate IDs are errors. Unused IDs do not add strings and have no effect.
-Files are limited to 4 MiB. Text is UTF-8 and converted to the game's CP850
-encoding; unrepresentable characters and embedded NUL are errors.
+Files are limited to 4 MiB and must be valid UTF-8 JSON5. String values represent game bytes, not Unicode display text: each decoded character from `U+0001` through `U+00FF` supplies the byte with the same numeric value. There is no CP850 conversion or encoding flag. Embedded NUL and characters above `U+00FF` are errors.
+
+ASCII text stays unchanged. Use `\u00XX` or JSON5's `\xXX` escapes for high bytes and control codes. For example, `\u0090` supplies byte `0x90`, and `\u0080` supplies byte `0x80`. A literal character with value `U+00E9` supplies byte `0xE9`, not CP850 byte `0x82`.
+
+The meaning of a byte depends on the resource and selected language. Localized fonts also use ASCII positions for accented glyphs; preserve spellings such as German `n[chste`, French `sup#rieur`, and Italian `perch#` when copying original resources. Spanish `\u0090poca de Galaxia` preserves the original leading byte `0x90`.
+
+When extracting an LBX string, copy ASCII and escape other bytes by their numeric values. Also escape quotes, backslashes, and control characters as JSON5 requires. Do not paste an arbitrary binary byte stream into a UTF-8 file or convert the resource through a display code page first.
+
+Overrides written for the earlier CP850 conversion must use the original byte values instead. For example, an event token previously written as `\u00c7` must now be `\u0080`. ASCII-only overrides need no changes.
 
 Packed string tables store several strings together in one LBX entry. These tables can grow beyond their original entry size; JSON5 files do not need binary padding.
 
@@ -59,9 +66,9 @@ Preserve format placeholders such as `%s` and `%d`, and any control codes expect
 
 See [Text formatting](text-formatting.md) for layout and substitution rules.
 Use JSON escapes such as `\n` for newlines and `\\` for a literal backslash.
-Event messages also contain special substitution bytes: represent them as their
-CP850-decoded Unicode characters (or equivalent `\uXXXX` escapes), not as raw
-byte values. Do not remove or translate these tokens.
+Event messages also contain special substitution bytes. Write their original
+numeric values directly, such as `\u0080` for the colony-name token. Do not
+remove or translate these tokens.
 
 ## Supported resources and string IDs
 

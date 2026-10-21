@@ -14,7 +14,7 @@ The examples use C-style notation to make non-printable bytes visible:
 
 These sequences describe bytes, not necessarily literal backslash characters in an asset. Use an editor or conversion tool that can write the required byte values, and test the resulting resource in the screen where it is used.
 
-JSON5 string overrides use UTF-8 text converted to CP850, not raw byte notation. Use JSON escapes such as `\n` for a newline and `\u0007` for the bell byte shown here as `\a`. Do not add an ending `\0`; the game adds the string terminator, and embedded NUL is rejected. See [String override encoding and limits](string-overrides.md#syntax-encoding-and-limits) before translating byte sequences into JSON5.
+JSON5 string overrides preserve numeric byte values without code-page conversion. Use `\xXX` or `\u00XX` for a byte, `\n` for a newline, and `\u0007` for the bell byte shown here as `\a`; `\a` is not a JSON5 bell escape. The JSON5 file itself must be UTF-8, and string values cannot contain characters above `U+00FF`. Do not add an ending `\0`; the game adds the string terminator, and embedded NUL is rejected. See [String override encoding and limits](string-overrides.md#syntax-encoding-and-limits) before copying byte sequences into JSON5.
 
 ## Standard control characters
 

@@ -134,13 +134,82 @@ DOCTEST_TEST_SUITE("farload buffer vfs") {
         DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
         char output[100] = {};
         string_overrides::Load_Message("KENTEXT.LBX", 0, 0, 100, 1, output, sizeof(output));
-        DOCTEST_CHECK(std::string(output) == "caf\x82 // 2: text");
+        DOCTEST_CHECK(std::string(output) == "caf\xe9 // 2: text");
         string_overrides::Load_Message("kentext.lbx", 1, 0, 100, 1, output, sizeof(output));
-        DOCTEST_CHECK(std::string(output) == "caf\x82 // 2: text");
+        DOCTEST_CHECK(std::string(output) == "caf\xe9 // 2: text");
         string_overrides::Load_Message("kentext.lbx", 1, 0, 100, 2, output, sizeof(output));
         DOCTEST_CHECK(std::string(output) == "unchanged");
         farload::Farload_Data_Static("KENTEXT.LBX", 0, output, 0, 1, 100);
         DOCTEST_CHECK(std::string(output) == "original");
+    }
+
+    DOCTEST_TEST_CASE("JSON5 escapes preserve every nonzero byte in messages and packed tables") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        const char* hex = "0123456789abcdef";
+        std::string escaped;
+        std::string expected;
+        for (int byte = 1; byte <= 255; ++byte) {
+            escaped += "\\u00";
+            escaped += hex[byte >> 4];
+            escaped += hex[byte & 15];
+            expected += (char)byte;
+        }
+        test_dir.Write_File("data/custom.json5", "{1:'" + escaped + "'}");
+        test_dir.Write_Lbx_File("custom.lbx", {Records({"original"}, 256)});
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        char output[256] = {};
+        string_overrides::Load_Message("custom.lbx", 0, 0, 256, 1, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output, 255) == expected);
+        DOCTEST_CHECK(output[255] == '\0');
+        std::vector<char> table = {'a', '\0', 'b', '\0'};
+        string_overrides::Apply_Table("custom.lbx", &table, 2);
+        expected.append("\0b\0", 3);
+        DOCTEST_CHECK(std::string(table.data(), table.size()) == expected);
+    }
+
+    DOCTEST_TEST_CASE("literal UTF8 and JSON5 byte escapes have the same numeric values") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        test_dir.Write_File("data/custom.json5",
+            "{1:'\xc2\x80\xc2\x90\xc3\xa9\xc3\xbf', 2:'\\u0080\\u0090\\u00e9\\u00ff',"
+            "3:'\\x80\\x90\\xe9\\xff', 4:'\\u0090poca de Galaxia', 5:'\\n\\u0007\\u0018A0 #['}");
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        char output[32] = {};
+        for (size_t id = 1; id <= 3; ++id) {
+            string_overrides::Apply_String("custom.lbx", id, output, 5);
+            DOCTEST_CHECK(std::string(output) == "\x80\x90\xe9\xff");
+        }
+        string_overrides::Apply_String("custom.lbx", 4, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "\x90poca de Galaxia");
+        string_overrides::Apply_String("custom.lbx", 5, output, sizeof(output));
+        DOCTEST_CHECK(std::string(output) == "\n\a\x18"
+                                             "A0 #[");
+    }
+
+    DOCTEST_TEST_CASE("non-byte strings fail atomically without using cached overrides") {
+        using namespace test_farload_buffer_detail;
+        Scoped_Test_Directory test_dir;
+        DOCTEST_REQUIRE(vfs::Init(test_dir.root_path().string().c_str()) == 1);
+        for (const auto& source : {
+                 "{1:'\\u0000'}", "{1:'\\x00'}", "{1:'\\u0100'}", "{1:'\\u0131'}", "{1:'\\u20ac'}", "{1:'\\ud83d\\ude00'}", "{1:'\\ud800'}", "{1:'\xc4\x80'}", "{1:'\xc0\x80'}", "{1:'\xc2'}", "{1:'\xc3X'}", "{1:'\x90'}"}) {
+            test_dir.Write_File("data/custom.json5", "{1:'\\u0080'}");
+            char output[16] = {};
+            string_overrides::Apply_String("custom.lbx", 1, output, sizeof(output));
+            DOCTEST_CHECK(std::string(output) == "\x80");
+            test_dir.Write_File("data/custom.json5", source);
+            for (int repeat = 0; repeat < 2; ++repeat) {
+                strlcpy(output, "original", sizeof(output));
+                std::string diagnostic;
+                DOCTEST_CHECK_FALSE(string_overrides::Try_Apply_String("custom.lbx", 1, output, sizeof(output), &diagnostic));
+                DOCTEST_CHECK(diagnostic.find("custom.json5:") == 0);
+                DOCTEST_CHECK(std::string(output) == "original");
+                std::vector<char> table = {'a', '\0'};
+                const auto original = table;
+                DOCTEST_CHECK_FALSE(string_overrides::Try_Apply_Table("custom.lbx", &table, 1, 1, false, &diagnostic));
+                DOCTEST_CHECK(table == original);
+            }
+        }
     }
 
     DOCTEST_TEST_CASE("packed overrides resize strings and retain positional empty strings") {

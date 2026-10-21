@@ -1,7 +1,6 @@
 #include "pch.h"
 
 #include "string_overrides.h"
-#include "config/text_encoding.h"
 #include "yyjson.h"
 
 #include <charconv>
@@ -71,6 +70,26 @@ namespace string_overrides {
             return result;
         }
 
+        bool Decode_Bytes(std::string_view text, std::string* bytes) {
+            bytes->clear();
+            bytes->reserve(text.size());
+            for (size_t i = 0; i < text.size(); ++i) {
+                const auto c = (unsigned char)text[i];
+                if (c == 0) return false;
+                if (c < 0x80) {
+                    bytes->push_back((char)c);
+                } else {
+                    // U+0080..U+00FF have only these two UTF-8 lead bytes.
+                    // Preserve their numeric byte values, including game tokens.
+                    if ((c != 0xC2 && c != 0xC3) || i + 1 == text.size()) return false;
+                    const auto next = (unsigned char)text[++i];
+                    if ((next & 0xC0) != 0x80) return false;
+                    bytes->push_back((char)(((c & 0x03) << 6) | (next & 0x3F)));
+                }
+            }
+            return true;
+        }
+
         using t_overrides = std::map<size_t, std::string>;
         struct s_cached_sidecar {
             std::string source;
@@ -120,8 +139,8 @@ namespace string_overrides {
                     return Fail(path, "expected positive decimal string IDs and string values", diagnostic);
                 }
                 std::string encoded;
-                if (!config::Encode_Utf8_To_Cp850(yyjson_get_str(value), yyjson_get_len(value), &encoded)) {
-                    return Fail(path, "string " + std::to_string(id) + " is not representable in CP850 or contains NUL", diagnostic);
+                if (!Decode_Bytes(std::string_view(yyjson_get_str(value), yyjson_get_len(value)), &encoded)) {
+                    return Fail(path, "string " + std::to_string(id) + " must contain only byte values U+0001..U+00FF (no NUL)", diagnostic);
                 }
                 if (!overrides->emplace(id, std::move(encoded)).second) {
                     return Fail(path, "duplicate string ID " + std::to_string(id), diagnostic);
