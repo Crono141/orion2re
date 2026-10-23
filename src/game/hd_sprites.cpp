@@ -2,6 +2,7 @@
 
 #include "game/hd_sprites.h"
 
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -94,6 +95,30 @@ namespace hd_sprites {
         int32_t asset_count;
         std::unordered_map<std::string, int32_t> asset_by_key;
         std::unordered_map<const void*, s_registration> registrations;
+
+        // ORION2RE_HD_STATS: count draws that had no HD art, by asset, and log them
+        // periodically. Debug aid for finding coverage gaps.
+        bool stats_enabled;
+        std::unordered_map<const void*, std::string> stats_names;
+        std::unordered_map<std::string, uint32_t> stats_missing;
+        uint32_t stats_draws;
+
+        void Stats_Missing(const std::string& key) {
+            stats_missing[key]++;
+            if (++stats_draws % 20000 != 0) {
+                return;
+            }
+            std::vector<std::pair<uint32_t, std::string>> top;
+            for (const auto& item : stats_missing) {
+                top.emplace_back(item.second, item.first);
+            }
+            std::sort(top.rbegin(), top.rend());
+            std::string line;
+            for (size_t i = 0; i < top.size() && i < 25; ++i) {
+                line += " " + top[i].second + "=" + std::to_string(top[i].first);
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: draws without HD art:%s", line.c_str());
+        }
 
         s_hd_glyph_font* glyph_fonts[HD_MAX_GLYPH_FONTS];
         int32_t glyph_font_count;
@@ -324,6 +349,7 @@ namespace hd_sprites {
         }
         initialized = true;
         enabled = vfs::File_Exists("hd/pack.json") != 0;
+        stats_enabled = enabled && SDL_getenv("ORION2RE_HD_STATS") != nullptr;
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd: %s", enabled ? "HD sprite pack found" : "no HD sprite pack");
         if (enabled && video::g_page_off.pixels != nullptr) {
             Allocate_Planes(video::g_page_off.width, video::g_page_off.height);
@@ -340,6 +366,11 @@ namespace hd_sprites {
         }
         if (!enabled || data == nullptr || lbx_name == nullptr || size < (int32_t)sizeof(s_registration::header)) {
             return;
+        }
+        if (stats_enabled) {
+            char key[64];
+            snprintf(key, sizeof(key), "%s#%d", lbx_name, (int)entry);
+            stats_names[data] = key;
         }
         s_registration registration = {};
         registration.asset = Find_Or_Create_Asset(lbx_name, entry);
@@ -359,6 +390,10 @@ namespace hd_sprites {
         }
         const auto found = registrations.find(anim);
         if (found == registrations.end()) {
+            if (stats_enabled) {
+                const auto name = stats_names.find(anim);
+                Stats_Missing(name != stats_names.end() ? name->second : std::string("unregistered"));
+            }
             return;
         }
         // The buffer may have been reused for other data since it was loaded; the header
@@ -394,6 +429,9 @@ namespace hd_sprites {
         }
         const int32_t slot = Find_Glyph_Font(font_file, font_index);
         if (slot < 0) {
+            if (stats_enabled) {
+                Stats_Missing(std::string("font:") + font_file + "/" + std::to_string(font_index));
+            }
             return;
         }
         s_hd_glyph_font* font = glyph_fonts[slot];
