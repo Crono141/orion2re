@@ -3,6 +3,10 @@
 #include "game/hd_sprites.h"
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -24,6 +28,19 @@ namespace hd_sprites {
             FRAME_SAME_AS = 2,
         };
 
+        // Decoding state of a frame's pixels (index/alpha). Frames are decoded by worker threads;
+        // only READY frames are read or freed by the game thread, only QUEUED/LOADING ones are
+        // written by workers.
+        enum e_frame_load : uint8_t {
+            LOAD_NONE = 0,
+            LOAD_QUEUED = 1,
+            LOAD_LOADING = 2,
+            LOAD_READY = 3,
+            LOAD_FAILED = 4,
+        };
+
+        struct s_hd_asset;
+
         struct s_hd_frame {
             e_frame_state state;
             int32_t same_as;
@@ -33,6 +50,10 @@ namespace hd_sprites {
             int32_t height;
             uint8_t* index;
             uint8_t* alpha;
+            std::atomic<uint8_t> load;
+            std::string vfs_path;        // hd/<LBX>/<EEE>/<FFF>.png
+            std::string disk_path;       // the same file on disk when it is not inside a zip
+            std::vector<uint8_t> packed; // PNG bytes read on the game thread (zipped packs)
         };
 
         struct s_hd_asset {
@@ -44,6 +65,7 @@ namespace hd_sprites {
             int32_t scale;
             int32_t frame_count;
             s_hd_frame* frames;
+            uint32_t last_used; // publish count of the last draw or load, for eviction
         };
 
         struct s_registration {
@@ -174,15 +196,11 @@ namespace hd_sprites {
             return ok;
         }
 
-        bool Load_Frame_Png(const std::string& path, s_hd_frame* frame) {
-            std::vector<uint8_t> bytes;
-            if (!Read_Vfs_File(path.c_str(), &bytes)) {
-                return false;
-            }
-            SDL_IOStream* stream = SDL_IOFromConstMem(bytes.data(), bytes.size());
+        // Decodes PNG bytes (LA or grey) into a frame's index/alpha planes.
+        bool Decode_Png(SDL_IOStream* stream, const std::string& name, s_hd_frame* frame) {
             SDL_Surface* loaded = stream != nullptr ? SDL_LoadPNG_IO(stream, true) : nullptr;
             if (loaded == nullptr) {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: unable to decode %s: %s", path.c_str(), SDL_GetError());
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: unable to decode %s: %s", name.c_str(), SDL_GetError());
                 return false;
             }
             SDL_Surface* rgba = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_RGBA32);
@@ -195,14 +213,16 @@ namespace hd_sprites {
                 frame->height = rgba->h;
             }
             if (rgba->w != frame->width || rgba->h != frame->height) {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: %s is %dx%d, sprite.json says %dx%d", path.c_str(), rgba->w, rgba->h, frame->width, frame->height);
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: %s is %dx%d, sprite.json says %dx%d", name.c_str(), rgba->w, rgba->h, frame->width, frame->height);
                 SDL_DestroySurface(rgba);
                 return false;
             }
             const size_t count = (size_t)frame->width * (size_t)frame->height;
-            frame->index = (uint8_t*)malloc(count);
-            frame->alpha = (uint8_t*)malloc(count);
-            if (frame->index == nullptr || frame->alpha == nullptr) {
+            uint8_t* index = (uint8_t*)malloc(count);
+            uint8_t* alpha = (uint8_t*)malloc(count);
+            if (index == nullptr || alpha == nullptr) {
+                free(index);
+                free(alpha);
                 SDL_DestroySurface(rgba);
                 return false;
             }
@@ -210,12 +230,23 @@ namespace hd_sprites {
                 const uint8_t* row = (const uint8_t*)rgba->pixels + (size_t)y * (size_t)rgba->pitch;
                 for (int32_t x = 0; x < frame->width; ++x) {
                     // Grey PNGs expand to R = G = B = palette index.
-                    frame->index[(size_t)y * frame->width + x] = row[x * 4 + 0];
-                    frame->alpha[(size_t)y * frame->width + x] = row[x * 4 + 3];
+                    index[(size_t)y * frame->width + x] = row[x * 4 + 0];
+                    alpha[(size_t)y * frame->width + x] = row[x * 4 + 3];
                 }
             }
             SDL_DestroySurface(rgba);
+            frame->index = index;
+            frame->alpha = alpha;
             return true;
+        }
+
+        // Synchronous load through the VFS (game thread; glyphs).
+        bool Load_Frame_Png(const std::string& path, s_hd_frame* frame) {
+            std::vector<uint8_t> bytes;
+            if (!Read_Vfs_File(path.c_str(), &bytes)) {
+                return false;
+            }
+            return Decode_Png(SDL_IOFromConstMem(bytes.data(), bytes.size()), path, frame);
         }
 
         bool Read_Int_Pair(yyjson_val* array, int32_t* a, int32_t* b) {
@@ -227,8 +258,93 @@ namespace hd_sprites {
             return true;
         }
 
-        // Loads sprite.json and every frame PNG of an asset. Runs on the game thread the first
-        // time the asset is drawn.
+        // ------------------------------------------------------------ frame streaming
+        //
+        // Frame PNGs are decoded by worker threads, so drawing never waits for art: a draw whose
+        // frame is not ready shows the original pixels and is upgraded when the frame arrives
+        // (see s_deferred). Workers read files directly when the pack is a directory; for zipped
+        // packs the game thread reads the bytes (the VFS is not thread safe) and workers decode.
+
+        std::mutex queue_mutex;
+        std::condition_variable queue_ready;
+        std::deque<s_hd_frame*> queue;
+        std::atomic<int64_t> decoded_bytes;
+        uint32_t publish_count;
+        int64_t cache_budget = (int64_t)4096 << 20;
+        bool workers_started;
+
+        void Worker() {
+            for (;;) {
+                s_hd_frame* frame = nullptr;
+                {
+                    std::unique_lock<std::mutex> lock(queue_mutex);
+                    queue_ready.wait(lock, [] { return !queue.empty(); });
+                    frame = queue.front();
+                    queue.pop_front();
+                }
+                uint8_t expected = LOAD_QUEUED;
+                if (!frame->load.compare_exchange_strong(expected, LOAD_LOADING)) {
+                    continue; // already taken (queued twice) or evicted meanwhile
+                }
+                bool ok;
+                if (!frame->disk_path.empty()) {
+                    ok = Decode_Png(SDL_IOFromFile(frame->disk_path.c_str(), "rb"), frame->disk_path, frame);
+                } else {
+                    ok = !frame->packed.empty() &&
+                        Decode_Png(SDL_IOFromConstMem(frame->packed.data(), frame->packed.size()), frame->vfs_path, frame);
+                    std::vector<uint8_t>().swap(frame->packed);
+                }
+                if (ok) {
+                    decoded_bytes += (int64_t)frame->width * frame->height * 2;
+                }
+                frame->load.store(ok ? LOAD_READY : LOAD_FAILED, std::memory_order_release);
+            }
+        }
+
+        void Start_Workers() {
+            if (workers_started) {
+                return;
+            }
+            workers_started = true;
+            const int32_t count = SDL_clamp(SDL_GetNumLogicalCPUCores() / 4, 2, 8);
+            for (int32_t i = 0; i < count; ++i) {
+                std::thread(Worker).detach();
+            }
+        }
+
+        // Queues a frame for decoding; urgent frames (wanted by a draw now) go first.
+        void Request_Frame(s_hd_frame* frame, bool urgent) {
+            uint8_t expected = LOAD_NONE;
+            if (frame == nullptr || frame->state != FRAME_ART || !frame->load.compare_exchange_strong(expected, LOAD_QUEUED)) {
+                if (urgent && frame != nullptr && frame->load.load() == LOAD_QUEUED) {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    queue.push_front(frame); // a duplicate entry; the worker skips whichever comes second
+                    queue_ready.notify_one();
+                }
+                return;
+            }
+            if (frame->disk_path.empty() && frame->packed.empty()) {
+                (void)Read_Vfs_File(frame->vfs_path.c_str(), &frame->packed);
+            }
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            if (urgent) {
+                queue.push_front(frame);
+            } else {
+                queue.push_back(frame);
+            }
+            queue_ready.notify_one();
+        }
+
+        int32_t Queue_Length() {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            return (int32_t)queue.size();
+        }
+
+        bool Frame_Ready(const s_hd_frame* frame) {
+            return frame != nullptr && frame->load.load(std::memory_order_acquire) == LOAD_READY;
+        }
+
+        // Reads sprite.json; frame pixels are decoded later by the workers.
         void Load_Asset(s_hd_asset* asset) {
             asset->loaded = true;
             std::vector<uint8_t> json;
@@ -256,11 +372,7 @@ namespace hd_sprites {
             }
 
             const int32_t count = (int32_t)yyjson_arr_size(frames);
-            s_hd_frame* loaded = (s_hd_frame*)calloc((size_t)count, sizeof(s_hd_frame));
-            if (loaded == nullptr) {
-                yyjson_doc_free(document);
-                return;
-            }
+            s_hd_frame* loaded = new s_hd_frame[(size_t)count]();
             size_t index = 0;
             size_t max = 0;
             yyjson_val* item = nullptr;
@@ -282,13 +394,62 @@ namespace hd_sprites {
                 }
                 char name[16];
                 snprintf(name, sizeof(name), "/%03d.png", frame_number);
-                if (Load_Frame_Png(asset->directory + name, frame)) {
-                    frame->state = FRAME_ART;
+                frame->vfs_path = asset->directory + name;
+                char disk[1024];
+                if (vfs::Resolve_Read_Path_No_Zip(frame->vfs_path.c_str(), disk, sizeof(disk)) != 0) {
+                    frame->disk_path = disk;
                 }
+                frame->state = FRAME_ART;
             }
             yyjson_doc_free(document);
             asset->frames = loaded;
             asset->frame_count = count;
+        }
+
+        // Queues every frame of an asset (the game just loaded its LBX entry, so it is about to
+        // be drawn).
+        void Prefetch_Asset(s_hd_asset* asset) {
+            if (!asset->loaded) {
+                Load_Asset(asset);
+            }
+            asset->last_used = publish_count;
+            for (int32_t i = 0; i < asset->frame_count; ++i) {
+                Request_Frame(&asset->frames[i], false);
+            }
+        }
+
+        // Frees the decoded pixels of the least recently used assets beyond the cache budget.
+        void Evict_Over_Budget() {
+            if (decoded_bytes.load() <= cache_budget) {
+                return;
+            }
+            std::vector<std::pair<uint32_t, s_hd_asset*>> candidates;
+            for (int32_t i = 0; i < asset_count; ++i) {
+                s_hd_asset* asset = assets[i];
+                // Keep anything used within the last few seconds.
+                if (asset->frames != nullptr && publish_count - asset->last_used > 120) {
+                    candidates.emplace_back(asset->last_used, asset);
+                }
+            }
+            std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            const int64_t target = cache_budget - cache_budget / 8;
+            for (const auto& candidate : candidates) {
+                if (decoded_bytes.load() <= target) {
+                    break;
+                }
+                s_hd_asset* asset = candidate.second;
+                for (int32_t i = 0; i < asset->frame_count; ++i) {
+                    s_hd_frame& frame = asset->frames[i];
+                    if (frame.load.load(std::memory_order_acquire) != LOAD_READY) {
+                        continue;
+                    }
+                    free(frame.index);
+                    free(frame.alpha);
+                    frame.index = frame.alpha = nullptr;
+                    decoded_bytes -= (int64_t)frame.width * frame.height * 2;
+                    frame.load.store(LOAD_NONE, std::memory_order_release);
+                }
+            }
         }
 
         const s_hd_frame* Resolve_Frame(const s_hd_asset* asset, int32_t frame_number) {
@@ -565,6 +726,14 @@ namespace hd_sprites {
             int32_t image_x = 0;
             int32_t image_y = 0;
             std::string name; // for the probe
+            // The frame has art that is still being decoded: written pixels show the original
+            // for now and are recorded so they can be upgraded when it arrives.
+            bool waiting = false;
+            // Clip window at the start of the draw (the fringe must stay inside it).
+            int32_t clip_x1 = 0;
+            int32_t clip_y1 = 0;
+            int32_t clip_x2 = 0x7FFF;
+            int32_t clip_y2 = 0x7FFF;
         };
 
         struct s_stamp {
@@ -578,6 +747,18 @@ namespace hd_sprites {
         uint32_t generation = 1;
         // Art draws are rendered when the draw ends, once every written pixel is known.
         std::vector<s_stamp> pending;
+
+        // Page draws that showed the original because their frame was still decoding. When the
+        // frame is ready, pixels that no later draw touched (mark still holds the draw's
+        // generation, page value unchanged) get the art.
+        struct s_deferred {
+            s_draw draw;
+            uint32_t generation;
+            uint32_t published; // publish count when recorded
+            std::vector<s_stamp> stamps;
+        };
+        std::vector<s_deferred> deferred;
+        std::vector<s_stamp> waiting_stamps;
 
         void Probe(const s_surface& target, int32_t offset, uint8_t value, const char* what) {
             if (probe_x < 0 || target.width <= 0 || offset % target.width != probe_x || offset / target.width != probe_y) {
@@ -788,16 +969,10 @@ namespace hd_sprites {
                 return; // images get no fringe: their transparent pixels are never drawn
             }
             // Fringe: the art's soft edge past the original outline, over unwritten neighbours.
-            int32_t clip_x1 = 0;
-            int32_t clip_y1 = 0;
-            int32_t clip_x2 = target.width - 1;
-            int32_t clip_y2 = target.height - 1;
-            if (animate::clipping_flag == 1) {
-                clip_x1 = SDL_max(clip_x1, (int32_t)video::screen_window_x1);
-                clip_y1 = SDL_max(clip_y1, (int32_t)video::screen_window_y1);
-                clip_x2 = SDL_min(clip_x2, (int32_t)video::screen_window_x2);
-                clip_y2 = SDL_min(clip_y2, (int32_t)video::screen_window_y2);
-            }
+            const int32_t clip_x1 = SDL_max(0, draw.clip_x1);
+            const int32_t clip_y1 = SDL_max(0, draw.clip_y1);
+            const int32_t clip_x2 = SDL_min(target.width - 1, draw.clip_x2);
+            const int32_t clip_y2 = SDL_min(target.height - 1, draw.clip_y2);
             for (int32_t y = SDL_max(y0 - 1, clip_y1); y <= SDL_min(y1 + 1, clip_y2); ++y) {
                 for (int32_t x = SDL_max(x0 - 1, clip_x1); x <= SDL_min(x1 + 1, clip_x2); ++x) {
                     if (Marked(target, x, y)) {
@@ -826,6 +1001,15 @@ namespace hd_sprites {
 
         void Start_Draw() {
             Flush_Pending();
+            if (draw.waiting && !waiting_stamps.empty()) {
+                if (deferred.size() >= 4096) {
+                    deferred.erase(deferred.begin(), deferred.begin() + 1024);
+                }
+                deferred.push_back({draw, generation, publish_count, std::move(waiting_stamps)});
+                waiting_stamps.clear();
+            }
+            waiting_stamps.clear();
+            draw.waiting = false;
             draw.source = SOURCE_NONE;
             draw.frame = nullptr;
             draw.glyph = false;
@@ -843,6 +1027,14 @@ namespace hd_sprites {
             if (probe_x >= 0) {
                 Probe(target, offset, value, "stamp");
             }
+            if (draw.source == SOURCE_ART && draw.waiting) {
+                Render_Now(target, offset, value, level);
+                if (!target.row_dirty.empty()) {
+                    target.mark[(size_t)offset] = generation;
+                    waiting_stamps.push_back({&target, offset, value, (int8_t)level});
+                }
+                return;
+            }
             if (draw.source == SOURCE_ART) {
                 Ensure_Hd(target);
                 target.mark[(size_t)offset] = generation;
@@ -854,6 +1046,15 @@ namespace hd_sprites {
 
         // Settles the area the current art draw can touch, fringe included.
         void Settle_Art_Area() {
+            if (animate::clipping_flag == 1) {
+                draw.clip_x1 = video::screen_window_x1;
+                draw.clip_y1 = video::screen_window_y1;
+                draw.clip_x2 = video::screen_window_x2;
+                draw.clip_y2 = video::screen_window_y2;
+            } else {
+                draw.clip_x1 = draw.clip_y1 = 0;
+                draw.clip_x2 = draw.clip_y2 = 0x7FFF;
+            }
             const s_hd_frame* frame = draw.frame;
             const int32_t left = draw.x + frame->origin_x;
             const int32_t top = draw.y + frame->origin_y;
@@ -915,6 +1116,11 @@ namespace hd_sprites {
             if (frame == nullptr) {
                 return;
             }
+            asset->last_used = publish_count;
+            if (!Frame_Ready(frame)) {
+                Request_Frame(const_cast<s_hd_frame*>(frame), true);
+                draw.waiting = true;
+            }
             draw.source = SOURCE_ART;
             draw.frame = frame;
             draw.x = x;
@@ -946,6 +1152,43 @@ namespace hd_sprites {
             return settled;
         }
 
+        // Gives deferred draws their art once it is decoded (game thread, between draws).
+        void Upgrade_Deferred() {
+            if (deferred.empty()) {
+                return;
+            }
+            s_draw saved_draw = draw;
+            const uint32_t saved_generation = generation;
+            size_t kept = 0;
+            for (size_t i = 0; i < deferred.size(); ++i) {
+                s_deferred& entry = deferred[i];
+                const uint8_t state = entry.draw.frame->load.load(std::memory_order_acquire);
+                if (state != LOAD_READY) {
+                    // Still decoding (or evicted and queued again): keep it a while.
+                    if (state != LOAD_FAILED && publish_count - entry.published < 600) {
+                        if (kept != i) {
+                            deferred[kept] = std::move(entry);
+                        }
+                        kept++;
+                    }
+                    continue;
+                }
+                draw = entry.draw;
+                draw.waiting = false;
+                generation = entry.generation;
+                for (const s_stamp& stamp : entry.stamps) {
+                    const s_surface& target = *stamp.target;
+                    if (target.mark[(size_t)stamp.offset] == entry.generation && target.shadow[(size_t)stamp.offset] == stamp.value) {
+                        pending.push_back(stamp);
+                    }
+                }
+                Flush_Pending();
+            }
+            deferred.resize(kept);
+            draw = saved_draw;
+            generation = saved_generation;
+        }
+
     } // namespace
 
     void Initialize() {
@@ -971,6 +1214,20 @@ namespace hd_sprites {
             stats_interval = (uint32_t)atoi(stats);
         }
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd: %s", enabled ? "HD sprite pack found" : "no HD sprite pack");
+        const char* budget = SDL_getenv("ORION2RE_HD_CACHE_MB");
+        if (budget != nullptr && atoi(budget) > 0) {
+            cache_budget = (int64_t)atoi(budget) << 20;
+        }
+        if (enabled) {
+            Start_Workers();
+            // The title screen is the first thing shown: start decoding it right away.
+            for (int32_t entry = 0; entry < 40; ++entry) {
+                const int32_t index = Find_Or_Create_Asset("MAINMENU.LBX", entry);
+                if (index >= 0) {
+                    Prefetch_Asset(assets[index]);
+                }
+            }
+        }
         if (enabled && video::g_page_off.pixels != nullptr) {
             Allocate_Planes(video::g_page_off.width, video::g_page_off.height);
         }
@@ -1014,6 +1271,14 @@ namespace hd_sprites {
             return;
         }
         registrations[data] = registration;
+        // The entry is about to be drawn: start decoding its art (unless a mod changed it).
+        s_hd_asset* asset = assets[registration.asset];
+        if (!asset->loaded) {
+            Load_Asset(asset);
+        }
+        if (!asset->has_source_hash || asset->source_hash == registration.data_hash) {
+            Prefetch_Asset(asset);
+        }
     }
 
     void Forget_Loads(const void* begin, const void* end) {
@@ -1153,6 +1418,11 @@ namespace hd_sprites {
         const s_hd_frame* art = Resolve_Frame(asset, frame);
         if (art == nullptr) {
             return;
+        }
+        asset->last_used = publish_count;
+        if (!Frame_Ready(art)) {
+            Request_Frame(const_cast<s_hd_frame*>(art), true);
+            draw.waiting = true;
         }
         draw.source = SOURCE_ART;
         draw.frame = art;
@@ -1468,6 +1738,8 @@ namespace hd_sprites {
 
     void Free_Planes() {
         pending.clear();
+        deferred.clear();
+        waiting_stamps.clear();
         Free_Surface(page_off);
         Free_Surface(page_back);
         Free_Surface(page_published);
@@ -1519,6 +1791,9 @@ namespace hd_sprites {
         }
         Flush_Pending();
         s_scoped_timer timer(TIMER_PUBLISH);
+        Upgrade_Deferred();
+        publish_count++;
+        Evict_Over_Budget();
         // Settle pixels changed by code without hooks: the original pixel, enlarged.
         const uint32_t settled = Settle(page_off, video::g_page_off.pixels, 0, 0, page_off.width, page_off.height);
         if (stats_enabled) {
@@ -1526,11 +1801,14 @@ namespace hd_sprites {
             if (++stats_publishes % 100 == 0) {
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "hd stats: %u pixels settled to plain scaling over the last 100 frames; per frame: render %.2f ms, "
-                    "page copies %.2f ms, publish %.2f ms",
+                    "page copies %.2f ms, publish %.2f ms; cache %lld MB decoded, %d frames queued, %d draws waiting for art",
                     stats_settled_pixels,
                     (double)stats_timer_ns[TIMER_RENDER] / 1e8,
                     (double)stats_timer_ns[TIMER_COPY] / 1e8,
-                    (double)stats_timer_ns[TIMER_PUBLISH] / 1e8);
+                    (double)stats_timer_ns[TIMER_PUBLISH] / 1e8,
+                    (long long)(decoded_bytes.load() >> 20),
+                    Queue_Length(),
+                    (int)deferred.size());
                 stats_settled_pixels = 0;
                 memset(stats_timer_ns, 0, sizeof(stats_timer_ns));
             }
