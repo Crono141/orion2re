@@ -437,6 +437,8 @@ namespace animate {
                         uint8_t pixel = frame_data[data_byte_offset++];
                         platform::offscreen_surface[screen_offset] = pixel;
                         video::current_video_page[screen_offset] = pixel;
+                        hd_sprites::Stamp_Page(platform::offscreen_surface, &platform::offscreen_surface[screen_offset], 1);
+                        hd_sprites::Stamp_Run(&video::current_video_page[screen_offset], 1);
                         screen_offset++;
                     } while (screen_offset < end_screen_offset);
                 }

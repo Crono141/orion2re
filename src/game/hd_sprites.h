@@ -61,6 +61,17 @@ namespace hd_sprites {
     // the HD art below in true colour.
     void Stamp_Glass(const uint8_t* dst, uint8_t background_value);
 
+    // Brackets a draw of a known LBX entry that was not loaded through farload (streamed file
+    // animations): frame `frame` drawn with its top-left at (x, y).
+    void Begin_Asset_Draw(const char* lbx_name, int32_t entry, int16_t frame, int16_t x, int16_t y);
+
+    // Like Stamp_Run, for pixels written to an explicit page (draws that write the back page
+    // directly) instead of the current video page.
+    void Stamp_Page(const uint8_t* page, const uint8_t* dst, int32_t count);
+
+    // Owner records follow a partial page copy (count bytes at byte offset `offset`).
+    void Copy_Plane_Span(const uint8_t* src_page, const uint8_t* dst_page, int32_t offset, int32_t count);
+
     // Records that `count` pixels at `dst` (inside the current video page) were written.
     void Stamp_Run(const uint8_t* dst, int32_t count);
 

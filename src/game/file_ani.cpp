@@ -8,6 +8,11 @@ namespace file_ani {
     uint32_t file_animation_end;
     s_vfs_file* file_animation_fptr;
     uint32_t file_animation_opened_flag[FILE_ANI_MULTI_SLOT_COUNT];
+    // LBX name and entry of the open file animations, for HD sprite replacement.
+    char file_animation_name[16];
+    int32_t file_animation_entry;
+    char file_animation_name_multi[FILE_ANI_MULTI_SLOT_COUNT][16];
+    int32_t file_animation_entry_multi[FILE_ANI_MULTI_SLOT_COUNT];
     s_vfs_file* file_animation[FILE_ANI_MULTI_SLOT_COUNT];
     uint32_t file_animation_start_multi[FILE_ANI_MULTI_SLOT_COUNT];
     uint32_t file_animation_end_multi[FILE_ANI_MULTI_SLOT_COUNT];
@@ -39,6 +44,8 @@ namespace file_ani {
 
         file = vfs::fopen_lbx(filename, entry_index);
         file_animation_open = 1;
+        strlcpy(file_animation_name, filename, sizeof(file_animation_name));
+        file_animation_entry = entry_index;
 
         if (file == nullptr) {
             farload::Error_Handler(filename, 1, entry_index);
@@ -83,6 +90,7 @@ namespace file_ani {
             exitm::Exit_With_Message("File Animation Frame Too Large");
         }
 
+        hd_sprites::Begin_Asset_Draw(file_animation_name, file_animation_entry, current_frame, 0, 0);
         vfs::fseek(file_animation_fptr, (int32_t)frame_offset, SEEK_SET);
         vfs::fread(file_animation_buffer, frame_size, 1, file_animation_fptr);
 
@@ -139,6 +147,7 @@ namespace file_ani {
             }
         }
 
+        hd_sprites::End_Draw();
         animate::animation_header->current_frame++;
 
         if ((animate::animation_header->flags & 0x20) == 0) {
@@ -175,6 +184,7 @@ namespace file_ani {
             exitm::Exit_With_Message("File Animation Frame Too Large");
         }
 
+        hd_sprites::Begin_Asset_Draw(file_animation_name, file_animation_entry, animate::animation_header->current_frame, 0, 0);
         vfs::fseek(file_animation_fptr, (int32_t)frame_offset, SEEK_SET);
         vfs::fread(file_animation_buffer, frame_size, 1, file_animation_fptr);
 
@@ -197,6 +207,7 @@ namespace file_ani {
                 break;
         }
 
+        hd_sprites::End_Draw();
         animate::animation_header->current_frame++;
 
         if (animate::animation_header->flags & 0x20) {
@@ -258,6 +269,8 @@ namespace file_ani {
             vfs::fclose(file_animation[slot]);
         }
 
+        strlcpy(file_animation_name_multi[slot], filename, sizeof(file_animation_name_multi[slot]));
+        file_animation_entry_multi[slot] = entry_index;
         file = vfs::fopen_lbx(filename, entry_index);
         if (file == nullptr) {
             farload::Error_Handler(filename, 1, entry_index);
@@ -303,6 +316,7 @@ namespace file_ani {
             exitm::Exit_With_Message("File Animation Frame Too Large");
         }
 
+        hd_sprites::Begin_Asset_Draw(file_animation_name_multi[anim_idx], file_animation_entry_multi[anim_idx], animate::animation_header->current_frame, 0, 0);
         vfs::fseek(file_animation[anim_idx], (int32_t)frame_offset, SEEK_SET);
         vfs::fread(file_animation_buffer, frame_size, 1, file_animation[anim_idx]);
 
@@ -329,6 +343,7 @@ namespace file_ani {
                 break;
         }
 
+        hd_sprites::End_Draw();
         animate::animation_header->current_frame++;
 
         if (animate::animation_header->flags & 0x20) {
@@ -370,6 +385,7 @@ namespace file_ani {
         }
 
         uint8_t* sprite = file_animation_buffer;
+        hd_sprites::Begin_Asset_Draw(file_animation_name_multi[anim_idx], file_animation_entry_multi[anim_idx], animate::animation_header->current_frame, 0, 0);
         vfs::fseek(file_animation[anim_idx], (int32_t)frame_offset, SEEK_SET);
         vfs::fread(sprite, frame_size, 1, file_animation[anim_idx]);
 
@@ -397,6 +413,7 @@ namespace file_ani {
                 break;
         }
 
+        hd_sprites::End_Draw();
         animate::animation_header->current_frame++;
 
         if ((animate::animation_header->flags & 0x20) != 0) {

@@ -502,6 +502,8 @@ namespace video {
                     alt_offscreen_surface + dword_offset,
                     (uint32_t*)(offscreen_surface + dword_offset * (int32_t)sizeof(*alt_offscreen_surface)),
                     (uint32_t)count);
+                hd_sprites::Copy_Plane_Span(offscreen_surface, (const uint8_t*)alt_offscreen_surface,
+                    dword_offset * 4, count * 4);
             }
 
             row_dword_offset += dwords_per_row;
