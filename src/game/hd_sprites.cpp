@@ -123,6 +123,20 @@ namespace hd_sprites {
         uint32_t stats_glyph_missing_art;
         uint32_t stats_compose_calls;
         bool debug_stale;
+        // ORION2RE_HD_PROBE=x,y: log every owner write to that page pixel (debug aid).
+        int32_t probe_x = -1;
+        int32_t probe_y = -1;
+
+        void Probe_Write(int32_t x, int32_t y, uint32_t owner, uint8_t value, const char* where) {
+            if (x != probe_x || y != probe_y) {
+                return;
+            }
+            const s_command& c = commands[owner >> 8];
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "hd probe (%d,%d) %s: value=%u owner=%u kind=%d asset=%d frame=%d at %d,%d current_command=%u plane=%d",
+                x, y, where, value, owner >> 8, owner ? c.kind : -1, owner ? c.asset : -1, owner ? c.frame : -1,
+                owner ? c.x : 0, owner ? c.y : 0, current_command, source_plane != nullptr);
+        }
 
         void Stats_Missing(const std::string& key) {
             stats_missing[key]++;
@@ -465,6 +479,10 @@ namespace hd_sprites {
         stats_enabled = enabled && stats != nullptr;
         const char* debug = SDL_getenv("ORION2RE_HD_DEBUG");
         debug_stale = enabled && debug != nullptr && strcmp(debug, "stale") == 0;
+        const char* probe = SDL_getenv("ORION2RE_HD_PROBE");
+        if (probe != nullptr) {
+            (void)sscanf(probe, "%d,%d", &probe_x, &probe_y);
+        }
         if (stats_enabled && atoi(stats) > 1) {
             stats_interval = (uint32_t)atoi(stats);
         }
@@ -564,12 +582,20 @@ namespace hd_sprites {
         uint32_t* owner = plane + offset;
         if (current_command == 0 && source_plane == nullptr) {
             memset(owner, 0, (size_t)count * sizeof(uint32_t));
+            if (probe_x >= 0) {
+                for (int32_t i = 0; i < count; ++i) {
+                    Probe_Write((int32_t)((offset + i) % plane_width), (int32_t)((offset + i) / plane_width), 0, dst[i], "clear");
+                }
+            }
             return;
         }
         int32_t x = (int32_t)(offset % plane_width);
         int32_t y = (int32_t)(offset / plane_width);
         for (int32_t i = 0; i < count; ++i) {
             owner[i] = Owner_For(x, y, dst[i]);
+            if (probe_x >= 0) {
+                Probe_Write(x, y, owner[i], dst[i], "stamp");
+            }
             if (++x == plane_width) {
                 x = 0;
                 ++y;
