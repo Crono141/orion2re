@@ -4,7 +4,9 @@ Orion2 Redone retains the original 640 by 480 game interface while presenting it
 
 ## Windowed and Full-screen Display
 
-The game starts in a resizable window by default. Press Alt+Enter to switch between windowed and full-screen display. There is no separate in-game resolution setting: resizing the window changes how the fixed game image is scaled.
+The game starts in a resizable 640 by 480 window by default. Set `interface window_width` and `interface window_height` in `data/orion2re.cfg` to change the initial window dimensions (each from 1 through 16384). Set `interface fullscreen = true;` to start in full-screen display at the desktop resolution. These settings take effect after restarting the game.
+
+Press Alt+Enter to switch between windowed and full-screen display without changing the config file. The internal game image remains 640 by 480: resizing the window changes how that image is scaled, not the game interface resolution.
 
 Vertical synchronization is enabled by default. Set `interface vsync_enabled = false;` if it causes a problem with the display; disabling it may cause visible tearing.
 

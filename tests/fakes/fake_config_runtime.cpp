@@ -135,6 +135,9 @@ namespace COLBLDG {
 namespace platform {
     uint8_t g_vsync_enabled = 1;
     e_present_scaler g_present_scaler = PRESENT_SCALER_PIXELART;
+    int32_t g_window_width = 640;
+    int32_t g_window_height = 480;
+    uint8_t g_fullscreen = 0;
 } // namespace platform
 
 namespace debug_overlay {

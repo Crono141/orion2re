@@ -4033,6 +4033,44 @@
       },
     },
 
+    window_width: {
+      title: "Window width",
+      description: "Sets the initial width of the game window.",
+      remarks: "Changes take effect the next time the game starts. The internal game image remains 640 by 480; fullscreen uses the desktop resolution.",
+      examples: ["interface window_width = 1280;"],
+      group: "interface",
+      namespace: "interface",
+      type: "int32",
+      constraints: { min: 1, max: 16384 },
+      default: 640,
+      bind_root: { header: "game/platform.h", symbol: "platform::g_window_width" },
+    },
+
+    window_height: {
+      title: "Window height",
+      description: "Sets the initial height of the game window.",
+      remarks: "Changes take effect the next time the game starts. The internal game image remains 640 by 480; fullscreen uses the desktop resolution.",
+      examples: ["interface window_height = 960;"],
+      group: "interface",
+      namespace: "interface",
+      type: "int32",
+      constraints: { min: 1, max: 16384 },
+      default: 480,
+      bind_root: { header: "game/platform.h", symbol: "platform::g_window_height" },
+    },
+
+    fullscreen: {
+      title: "Start in fullscreen",
+      description: "Starts the game in fullscreen instead of a resizable window.",
+      remarks: "Changes take effect the next time the game starts. Fullscreen uses the desktop resolution. Alt+Enter still toggles fullscreen without changing this setting.",
+      examples: ["interface fullscreen = true;"],
+      group: "interface",
+      namespace: "interface",
+      type: "bool",
+      default: false,
+      bind_root: { header: "game/platform.h", symbol: "platform::g_fullscreen" },
+    },
+
     vsync_enabled: {
       title: "Vertical synchronization",
       description: "Synchronizes rendered frames with the display refresh rate.",
