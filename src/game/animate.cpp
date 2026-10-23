@@ -245,6 +245,7 @@ namespace animate {
                     uint8_t pixel = frame_data[src_idx++];
                     if (pixel < 0xf0) {
                         video::current_video_page[dest_ptr] = pixel;
+                        hd_sprites::Stamp_Run(&video::current_video_page[dest_ptr], 1);
                     }
                     dest_ptr++;
                 }
@@ -449,6 +450,12 @@ namespace animate {
     }
 
     void __cdecl Remap_Draw(int16_t x, int16_t y, s_animation_header* anim) {
+        hd_sprites::Begin_Remap_Draw(anim, x, y, remap::picture_remap_color_list);
+        Remap_Draw_Body(x, y, anim);
+        hd_sprites::End_Draw();
+    }
+
+    void __cdecl Remap_Draw_Body(int16_t x, int16_t y, s_animation_header* anim) {
         animation_header = anim;
         int16_t x2 = anim->width + x - 1;
         int16_t y2 = anim->height + y - 1;
@@ -695,7 +702,9 @@ namespace animate {
                     if (screen_offset < end_offset) {
                         do {
                             uint8_t color_idx = sprite_data[data_offset++];
-                            video::current_video_page[screen_offset++] = remap::picture_remap_color_list[color_idx];
+                            video::current_video_page[screen_offset] = remap::picture_remap_color_list[color_idx];
+                            hd_sprites::Stamp_Run(&video::current_video_page[screen_offset], 1);
+                            ++screen_offset;
                         } while (screen_offset < end_offset);
                     }
 
@@ -721,6 +730,7 @@ namespace animate {
                         uint8_t pixel = bitmap[src_offset];
                         if (pixel != 0 && pixel < 0xf0) {
                             video::current_video_page[dest_offset] = pixel;
+                            hd_sprites::Stamp_Run(&video::current_video_page[dest_offset], 1);
                         }
                         ++src_offset;
                         ++dest_offset;
@@ -831,6 +841,7 @@ namespace animate {
 
                     while (screen_offset < end_x) {
                         video::current_video_page[screen_offset] = remap::picture_remap_color_list[frame_data[data_idx]];
+                        hd_sprites::Stamp_Run(&video::current_video_page[screen_offset], 1);
                         data_idx++;
                         screen_offset++;
                     }

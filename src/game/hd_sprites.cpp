@@ -16,6 +16,7 @@ namespace hd_sprites {
 #define HD_MAX_ASSETS 16384
 #define HD_GLASS_FIRST 0xF0
 #define HD_MAX_GLYPH_FONTS 64
+#define HD_REMAP_TABLES 4096
 
     namespace {
 
@@ -62,6 +63,8 @@ namespace hd_sprites {
             int16_t x;
             int16_t y;
             e_command_kind kind;
+            uint8_t glassed;   // sprite was drawn with the glass flag (it can be set at runtime)
+            uint16_t remap;    // remap table, 0 = none
             uint8_t colors[8]; // glyph role -> palette index
         };
 
@@ -180,6 +183,10 @@ namespace hd_sprites {
         s_hd_glyph_font* glyph_fonts[HD_MAX_GLYPH_FONTS];
         int32_t glyph_font_count;
         std::unordered_map<std::string, int32_t> glyph_font_by_key;
+
+        // Snapshots of remap tables used by Remap_Draw, in a ring (slot 0 unused).
+        uint8_t remap_tables[HD_REMAP_TABLES][256];
+        uint32_t next_remap_table = 1;
 
         uint32_t* Under_Plane_For(const uint8_t* page) {
             if (page == nullptr) {
@@ -499,7 +506,7 @@ namespace hd_sprites {
             if (Resolve_Frame(asset, anim->current_frame) == nullptr) {
                 return;
             }
-            current_command = Alloc_Command({found->second.asset, anim->current_frame, x, y, COMMAND_SPRITE, {}});
+            current_command = Alloc_Command({found->second.asset, anim->current_frame, x, y, COMMAND_SPRITE, (uint8_t)((anim->flags & ANIMATION_FLAG_GLASSED) != 0), 0, {}});
         }
 
     } // namespace
@@ -558,6 +565,19 @@ namespace hd_sprites {
         Begin_Source(anim, x, y);
     }
 
+    void Begin_Remap_Draw(const s_animation_header* anim, int16_t x, int16_t y, const uint8_t* remap) {
+        Begin_Source(anim, x, y);
+        if (current_command == 0 || remap == nullptr) {
+            return;
+        }
+        uint32_t table = next_remap_table++ % HD_REMAP_TABLES;
+        if (table == 0) {
+            table = next_remap_table++ % HD_REMAP_TABLES;
+        }
+        memcpy(remap_tables[table], remap, 256);
+        commands[current_command].remap = (uint16_t)table;
+    }
+
     void Begin_Draw_To_Bitmap(const s_animation_header* src, int16_t x, int16_t y, const void* target_bitmap) {
         (void)target_bitmap;
         Begin_Source(src, x, y);
@@ -592,7 +612,7 @@ namespace hd_sprites {
             return;
         }
         stats_glyph_commands++;
-        s_command command = {slot, (int16_t)code, x, y, COMMAND_GLYPH, {}};
+        s_command command = {slot, (int16_t)code, x, y, COMMAND_GLYPH, 0, 0, {}};
         memcpy(command.colors, colors, sizeof(command.colors));
         current_command = Alloc_Command(command);
     }
@@ -844,8 +864,10 @@ namespace hd_sprites {
                     return flat;
                 }
                 index = command.colors[index - 1];
-            } else if (asset->glassed && index >= HD_GLASS_FIRST) {
+            } else if ((asset->glassed || command.glassed) && index >= HD_GLASS_FIRST) {
                 return flat;
+            } else if (command.remap != 0) {
+                index = remap_tables[command.remap][index];
             }
             return alpha == 255 ? palette[index] : Blend(palette[index], flat, alpha);
         }
@@ -942,12 +964,14 @@ namespace hd_sprites {
                                 continue;
                             }
                             index = command.colors[index - 1];
-                        } else if (asset->glassed && index >= HD_GLASS_FIRST) {
+                        } else if ((asset->glassed || command.glassed) && index >= HD_GLASS_FIRST) {
                             // Translucent pixel: tint the HD art that was underneath.
                             const uint32_t tinted = Apply_Glass(
                                 Under_Color(under_published[i], x, y, sx, sy, palette), index - HD_GLASS_FIRST);
                             out[sx] = alpha == 255 ? tinted : Blend(tinted, out[sx], alpha);
                             continue;
+                        } else if (command.remap != 0) {
+                            index = remap_tables[command.remap][index];
                         }
                         const uint32_t color = palette[index];
                         if (alpha == 255) {
