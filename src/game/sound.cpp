@@ -1,5 +1,7 @@
 #include "pch.h"
 
+#include "game/stream_source.h"
+
 namespace sound {
     void __cdecl Merge_Free_Blocks();
     int32_t __cdecl Get_Free_Sound_Index();
@@ -24,6 +26,7 @@ namespace sound {
 #define SOUND_INDEX_COUNT 33
 #define STREAM_PREFILL_BLOCKS 20
 #define INFINITE_LOOP_COUNT 0xFFFF
+#define STREAM_ENTRY_MAX_BYTES (256u * 1024u * 1024u)
 
     int16_t volume_table[101] = {
         -10000, -10000, -10000, -10000, -9287, -8643, -8117, -7673, -7287, -6947, -6643, -6368, -6117, -5886, -5673, -5473, -5287, -5112, -4947, -4791, -4643, -4503, -4368, -4240, -4117, -4000, -3886, -3777, -3673, -3571, -3473, -3379, -3287, -3198, -3112, -3029, -2947, -2868, -2791, -2716, -2643, -2572, -2503, -2435, -2368, -2304, -2240, -2178, -2117, -2058, -2000, -1942, -1886, -1831, -1777, -1724, -1673, -1621, -1571, -1522, -1473, -1426, -1379, -1333, -1287, -1242, -1198, -1155, -1112, -1070, -1029, -988, -947, -908, -868, -830, -791, -754, -716, -680, -643, -608, -572, -537, -503, -468, -435, -401, -368, -336, -304, -272, -240, -209, -178, -148, -117, -87, -58, -28, 0};
@@ -53,7 +56,7 @@ namespace sound {
     int32_t currentStreamId;
     int32_t currentStreamVolume = 100;
     uint8_t streamReadErrorLogged;
-    s_vfs_file* streamEntryFile;
+    stream_source::s_stream_source* streamSource;
 
     namespace {
         class Sound_State_Guard_ {
@@ -201,7 +204,7 @@ namespace sound {
         }
 
         bool Rewind_Stream_Source() {
-            return vfs::fseek(streamEntryFile, stream_data.data_start_offset, SEEK_SET) == 0;
+            return stream_source::Rewind(streamSource);
         }
 
         bool Queue_Stream_Block(uint32_t bytes_to_queue) {
@@ -570,10 +573,8 @@ namespace sound {
         audioPlaybackActive = 0;
         stream_data.status = 0;
         Destroy_SDL_Stream(destroyed_stream);
-        if (streamEntryFile != nullptr) {
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
-        }
+        stream_source::Close(streamSource);
+        streamSource = nullptr;
 
         audioInitialized = 0;
 
@@ -837,90 +838,62 @@ namespace sound {
 
         memset(stream, 0, sizeof(s_sound_stream));
 
-        if (streamEntryFile != nullptr) {
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
-        }
+        stream_source::Close(streamSource);
+        streamSource = nullptr;
 
-        streamEntryFile = vfs::fopen_lbx(currentStreamFilename, entry_index);
-        if (streamEntryFile == nullptr) {
+        // Each entry is read whole so the VFS file, which may live in a mod
+        // archive, is not held open while the track plays.
+        s_vfs_file* entry_file = vfs::fopen_lbx(currentStreamFilename, entry_index);
+        if (entry_file == nullptr) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: entry open failed file=%s entry=%d", currentStreamFilename, entry_index);
             return 0;
         }
 
-        char tag_buffer[5];
-        tag_buffer[4] = '\0';
-
-        s_sound_wav_header_disk disk_header = {};
-
-        if (vfs::fread(&disk_header, sizeof(disk_header), 1, streamEntryFile) != 1) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: header read failed file=%s entry=%d", currentStreamFilename, entry_index);
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
+        const int32_t entry_size = vfs::fsize(entry_file);
+        if (entry_size <= 0 || (uint32_t)entry_size > STREAM_ENTRY_MAX_BYTES) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: invalid entry size file=%s entry=%d size=%d", currentStreamFilename, entry_index, entry_size);
+            vfs::fclose(entry_file);
             return 0;
         }
 
-        memcpy(stream, &disk_header, sizeof(disk_header));
-        stream->data_start_offset = (uint32_t)sizeof(s_sound_wav_header_disk);
-
-        Copy_FourCC_Tag(tag_buffer, stream->riff_tag);
-        if (strcasecmp(tag_buffer, "RIFF") != 0) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: invalid RIFF tag file=%s entry=%d tag=%.4s", currentStreamFilename, entry_index, tag_buffer);
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
+        std::vector<uint8_t> entry_bytes((size_t)entry_size);
+        const size_t bytes_read = vfs::fread(entry_bytes.data(), 1, entry_bytes.size(), entry_file);
+        vfs::fclose(entry_file);
+        if (bytes_read != entry_bytes.size()) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: entry read failed file=%s entry=%d", currentStreamFilename, entry_index);
             return 0;
         }
 
-        Copy_FourCC_Tag(tag_buffer, stream->wave_tag);
-        if (strcasecmp(tag_buffer, "WAVE") != 0) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: invalid WAVE tag file=%s entry=%d tag=%.4s", currentStreamFilename, entry_index, tag_buffer);
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
+        stream_source::s_stream_source_info info = {};
+        const char* error = nullptr;
+        streamSource = stream_source::Open(&entry_bytes, &info, &error);
+        if (streamSource == nullptr) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: unsupported entry file=%s entry=%d reason=%s", currentStreamFilename, entry_index, error);
             return 0;
         }
 
-        Copy_FourCC_Tag(tag_buffer, stream->fmt_tag);
-        if (strcasecmp(tag_buffer, "fmt ") != 0) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: invalid fmt tag file=%s entry=%d tag=%.4s", currentStreamFilename, entry_index, tag_buffer);
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
-            return 0;
-        }
+        memcpy(stream->riff_tag, "RIFF", sizeof(stream->riff_tag));
+        memcpy(stream->wave_tag, "WAVE", sizeof(stream->wave_tag));
+        memcpy(stream->fmt_tag, "fmt ", sizeof(stream->fmt_tag));
+        memcpy(stream->data_tag, "data", sizeof(stream->data_tag));
+        stream->fmt_size = 16;
+        stream->format_tag = 1;
+        stream->channels = info.channels;
+        stream->samples_per_sec = info.sample_rate;
+        stream->bits_per_sample = info.bits_per_sample;
+        stream->block_align = (uint16_t)(info.channels * (info.bits_per_sample / 8u));
+        stream->avg_bytes_per_sec = info.sample_rate * stream->block_align;
+        stream->total_data_size = info.total_bytes;
+        stream->riff_size = info.total_bytes + 36u;
 
-        Copy_FourCC_Tag(tag_buffer, stream->data_tag);
-        if (strcasecmp(tag_buffer, "data") != 0) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "stream: invalid data tag file=%s entry=%d tag=%.4s", currentStreamFilename, entry_index, tag_buffer);
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
-            return 0;
-        }
-
-        if (stream->channels == 0 || stream->samples_per_sec == 0 || stream->total_data_size == 0) {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "stream: invalid audio params file=%s entry=%d channels=%u rate=%u bytes=%u",
-                currentStreamFilename,
-                entry_index,
-                (unsigned int)stream->channels,
-                (unsigned int)stream->samples_per_sec,
-                (unsigned int)stream->total_data_size);
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
-            return 0;
-        }
-
-        if (vfs::fseek(streamEntryFile, (int32_t)stream->data_start_offset, SEEK_SET) != 0) {
-            SDL_LogWarn(
-                SDL_LOG_CATEGORY_APPLICATION,
-                "stream: seek to data failed file=%s entry=%d data_offset=%u",
-                currentStreamFilename,
-                entry_index,
-                stream->data_start_offset);
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
-            return 0;
-        }
-
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "stream: opened file=%s entry=%d format=%s channels=%u rate=%u bytes=%u",
+            currentStreamFilename,
+            entry_index,
+            stream_source::Format_Name(info.format),
+            (unsigned int)info.channels,
+            (unsigned int)info.sample_rate,
+            (unsigned int)info.total_bytes);
         return 1;
     }
 
@@ -990,7 +963,7 @@ namespace sound {
     }
 
     uint8_t __cdecl Read_Stream_Data(void* buffer, uint32_t bytes_to_read, uint32_t* bytes_read_ptr) {
-        size_t bytes_read = vfs::fread(buffer, 1, bytes_to_read, sound::streamEntryFile);
+        size_t bytes_read = stream_source::Read(streamSource, buffer, bytes_to_read);
         if (bytes_read == bytes_to_read) {
             *bytes_read_ptr = (uint32_t)bytes_read;
             return 0;
@@ -1485,10 +1458,8 @@ namespace sound {
             Clear_SDL_Stream(stream_data.ds_buffer);
         }
 
-        if (streamEntryFile != nullptr) {
-            vfs::fclose(streamEntryFile);
-            streamEntryFile = nullptr;
-        }
+        stream_source::Close(streamSource);
+        streamSource = nullptr;
 
         loopStream = 0;
         stream_data.data_remaining = 0;

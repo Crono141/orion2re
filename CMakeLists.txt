@@ -91,6 +91,8 @@ set(ORION2RE_VENDORED_LUA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendors/lua")
 set(ORION2RE_VENDORED_LUA_COMMIT "7579fc9d7ed90240487251dfb69168f8e64e9294")
 set(ORION2RE_VENDORED_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendors/imgui")
 set(ORION2RE_VENDORED_IMGUI_COMMIT "f5befd2d29e66809cd1110a152e375a7f1981f06")
+set(ORION2RE_VENDORED_STB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendors/stb")
+set(ORION2RE_VENDORED_STB_COMMIT "003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5")
 
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
@@ -378,6 +380,33 @@ add_library(orion2re_lz4 STATIC
     "${ORION2RE_VENDORED_LZ4_DIR}/lib/lz4.c"
 )
 
+if(ORION2RE_BUILD_GAME OR ORION2RE_BUILD_TESTS OR ORION2RE_BUILD_CONFIG_TOOL)
+    if(NOT EXISTS "${ORION2RE_VENDORED_STB_DIR}/stb_vorbis.c")
+        message(FATAL_ERROR
+            "Ogg Vorbis music requires the stb submodule at vendors/stb. "
+            "Run 'git submodule update --init vendors/stb' and ensure it is pinned to ${ORION2RE_VENDORED_STB_COMMIT}."
+        )
+    endif()
+
+    # Only the memory decoding API is used; music entries are read through the
+    # VFS before decoding.
+    add_library(orion2re_stb_vorbis STATIC
+        "${ORION2RE_VENDORED_STB_DIR}/stb_vorbis.c"
+    )
+    target_include_directories(orion2re_stb_vorbis PUBLIC
+        "${ORION2RE_VENDORED_STB_DIR}"
+    )
+    target_compile_definitions(orion2re_stb_vorbis PUBLIC
+        STB_VORBIS_NO_STDIO
+        STB_VORBIS_NO_PUSHDATA_API
+    )
+    if(MSVC)
+        target_compile_options(orion2re_stb_vorbis PRIVATE /w)
+    else()
+        target_compile_options(orion2re_stb_vorbis PRIVATE -w)
+    endif()
+endif()
+
 set(ORION2RE_CONFIG_TOOL_CORE_SOURCES
     tools/config/file_util.cpp
     tools/config/file_util.h
@@ -491,6 +520,7 @@ if(ORION2RE_BUILD_GAME OR ORION2RE_BUILD_CONFIG_TOOL)
         SDL3::Headers
         uv_a
         orion2re_lz4
+        orion2re_stb_vorbis
         orion2re_lua
         miniz
     )
@@ -646,6 +676,7 @@ if(ORION2RE_BUILD_GAME)
         SDL3::SDL3-static
         uv_a
         orion2re_lz4
+        orion2re_stb_vorbis
         orion2re_lua
         orion2re_scalers
         miniz
@@ -665,7 +696,7 @@ if(ORION2RE_BUILD_GAME)
         "${ORION2RE_VENDORED_LIBSMACKER_DIR}"
         "${ORION2RE_VENDORED_YYJSON_DIR}/src")
     target_link_libraries(config-load-benchmark PRIVATE SDL3::SDL3-static uv_a
-        orion2re_lz4 orion2re_lua orion2re_scalers miniz orion2re_imgui)
+        orion2re_lz4 orion2re_stb_vorbis orion2re_lua orion2re_scalers miniz orion2re_imgui)
     if(MSVC)
         target_compile_definitions(config-load-benchmark PRIVATE WIN32 _CRT_SECURE_NO_DEPRECATE _CRT_NONSTDC_NO_DEPRECATE)
     endif()
@@ -736,6 +767,7 @@ if(ORION2RE_BUILD_CONFIG_TOOL)
         SDL3::SDL3-static
         uv_a
         orion2re_lz4
+        orion2re_stb_vorbis
         orion2re_lua
         orion2re_scalers
         miniz

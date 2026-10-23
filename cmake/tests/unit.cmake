@@ -232,7 +232,7 @@ orion2re_add_unit_test(test_resource_reload
         vendors/libsmacker/smk_hufftree.c
         vendors/yyjson/src/yyjson.c
     LIBRARIES
-        uv_a orion2re_lz4 orion2re_lua orion2re_scalers miniz orion2re_imgui
+        uv_a orion2re_lz4 orion2re_stb_vorbis orion2re_lua orion2re_scalers miniz orion2re_imgui
     LINK_SDL
 )
 target_include_directories(test_resource_reload PRIVATE
@@ -1948,8 +1948,11 @@ orion2re_add_unit_test(test_sound
         tests/unit/sound_test.cpp
     PRODUCTION_SOURCES
         src/game/sound.cpp
+        src/game/stream_source.cpp
     FAKE_SOURCES
         tests/fakes/fake_sound_runtime.cpp
+    LIBRARIES
+        orion2re_stb_vorbis
     LINK_SDL
 )
 
@@ -1964,6 +1967,19 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_link_options(test_sound PRIVATE -Wl,--gc-sections)
     endif()
 endif()
+
+orion2re_add_unit_test(test_stream_source
+    SOURCES
+        tests/unit/stream_source_test.cpp
+    PRODUCTION_SOURCES
+        src/game/stream_source.cpp
+    LIBRARIES
+        orion2re_stb_vorbis
+    LINK_SDL
+)
+target_compile_definitions(test_stream_source PRIVATE
+    AUDIO_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/audio"
+)
 
 orion2re_add_unit_test(test_farload_buffer_vfs
     SOURCES
