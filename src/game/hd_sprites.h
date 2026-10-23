@@ -35,6 +35,10 @@ namespace hd_sprites {
     void Begin_Draw(const s_animation_header* anim, int16_t x, int16_t y);
     void End_Draw();
 
+    // Like Begin_Draw for animate::Remap_Draw: pixels go through `remap` (256 entries), which
+    // is snapshotted so HD art is recoloured the same way.
+    void Begin_Remap_Draw(const s_animation_header* anim, int16_t x, int16_t y, const uint8_t* remap);
+
     // Brackets one glyph draw (fonts::Print_Character and variants). (x, y) is the unclipped
     // top-left of the glyph; colors are the 8 style colours the glyph's roles map to.
     void Begin_Glyph(const char* font_file, int16_t font_index, uint8_t code, int16_t x, int16_t y, const uint8_t* colors);
