@@ -1275,6 +1275,7 @@ namespace platform {
         //   wait <ms>           pause before the next command
         //   move <x> <y>        move the mouse (640x480 game coordinates)
         //   click <x> <y>       move, press and release the left button
+        //   rclick <x> <y>      same with the right button
         //   key <name>          press a key (SDL key name, e.g. Return, Escape, a)
         //   event <name>        window event: focus_lost, focus_gained, exposed
         //   screenshot <file>   save the next presented window as BMP
@@ -1325,7 +1326,7 @@ namespace platform {
                     continue;
                 }
                 s_script_step step = {command, 0, 0, {}};
-                if (step.command == "move" || step.command == "click") {
+                if (step.command == "move" || step.command == "click" || step.command == "rclick") {
                     (void)sscanf(line.c_str(), "%*s %d %d", &a, &b);
                 } else if (step.command == "wait") {
                     (void)sscanf(line.c_str(), "%*s %d", &a);
@@ -1348,11 +1349,11 @@ namespace platform {
                 const s_script_step& step = g_script[g_script_position++];
                 if (step.command == "wait") {
                     g_script_resume_ms = now + (uint64_t)step.a;
-                } else if (step.command == "move" || step.command == "click") {
+                } else if (step.command == "move" || step.command == "click" || step.command == "rclick") {
                     Set_Present_Mouse_Position((int16_t)step.a, (int16_t)step.b);
                     Forward_Game_Mouse_State((int16_t)step.a, (int16_t)step.b, 0, false);
-                    if (step.command == "click") {
-                        Forward_Game_Mouse_State((int16_t)step.a, (int16_t)step.b, 1, false);
+                    if (step.command != "move") {
+                        Forward_Game_Mouse_State((int16_t)step.a, (int16_t)step.b, step.command == "click" ? 1 : 2, false);
                         // Release on a later pass so the game sees the press.
                         g_script.insert(g_script.begin() + (ptrdiff_t)g_script_position,
                             {s_script_step{"release", step.a, step.b, {}}});
