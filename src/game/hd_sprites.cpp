@@ -1016,6 +1016,47 @@ namespace hd_sprites {
         registrations[data] = registration;
     }
 
+    void Forget_Loads(const void* begin, const void* end) {
+        if (!enabled) {
+            return;
+        }
+        for (auto it = registrations.begin(); it != registrations.end();) {
+            it = it->first >= begin && it->first < end ? registrations.erase(it) : std::next(it);
+        }
+    }
+
+    void Move_Loads(const void* begin, const void* end, ptrdiff_t delta) {
+        if (!enabled || delta == 0) {
+            return;
+        }
+        std::vector<std::pair<const void*, s_registration>> moved;
+        for (auto it = registrations.begin(); it != registrations.end();) {
+            if (it->first >= begin && it->first < end) {
+                moved.emplace_back((const uint8_t*)it->first + delta, it->second);
+                it = registrations.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto& item : moved) {
+            registrations[item.first] = item.second;
+        }
+        if (!stats_names.empty()) {
+            std::vector<std::pair<const void*, std::string>> names;
+            for (auto it = stats_names.begin(); it != stats_names.end();) {
+                if (it->first >= begin && it->first < end) {
+                    names.emplace_back((const uint8_t*)it->first + delta, it->second);
+                    it = stats_names.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            for (auto& item : names) {
+                stats_names[item.first] = item.second;
+            }
+        }
+    }
+
     void Begin_Draw(const s_animation_header* anim, int16_t x, int16_t y) {
         Begin_Source(anim, x, y);
     }
