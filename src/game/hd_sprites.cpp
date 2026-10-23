@@ -80,6 +80,18 @@ namespace hd_sprites {
         uint32_t* plane_off;
         uint32_t* plane_back;
         uint32_t* plane_published;
+        // What lay under glass pixels: (command << 8) | value written before the glass remap.
+        uint32_t* under_off;
+        uint32_t* under_back;
+        uint32_t* under_published;
+        // Glass colours (8-bit RGB, intensity 0-100) snapshotted with the published page.
+        struct s_glass {
+            uint8_t intensity;
+            uint8_t r;
+            uint8_t g;
+            uint8_t b;
+        };
+        s_glass glass_published[16];
         int32_t plane_width;
         int32_t plane_height;
 
@@ -134,8 +146,18 @@ namespace hd_sprites {
             const s_command& c = commands[owner >> 8];
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "hd probe (%d,%d) %s: value=%u owner=%u kind=%d asset=%d frame=%d at %d,%d current_command=%u plane=%d",
-                x, y, where, value, owner >> 8, owner ? c.kind : -1, owner ? c.asset : -1, owner ? c.frame : -1,
-                owner ? c.x : 0, owner ? c.y : 0, current_command, source_plane != nullptr);
+                x,
+                y,
+                where,
+                value,
+                owner >> 8,
+                owner ? c.kind : -1,
+                owner ? c.asset : -1,
+                owner ? c.frame : -1,
+                owner ? c.x : 0,
+                owner ? c.y : 0,
+                current_command,
+                source_plane != nullptr);
         }
 
         void Stats_Missing(const std::string& key) {
@@ -158,6 +180,19 @@ namespace hd_sprites {
         s_hd_glyph_font* glyph_fonts[HD_MAX_GLYPH_FONTS];
         int32_t glyph_font_count;
         std::unordered_map<std::string, int32_t> glyph_font_by_key;
+
+        uint32_t* Under_Plane_For(const uint8_t* page) {
+            if (page == nullptr) {
+                return nullptr;
+            }
+            if (page == video::g_page_off.pixels) {
+                return under_off;
+            }
+            if (page == video::g_page_back.pixels) {
+                return under_back;
+            }
+            return nullptr;
+        }
 
         uint32_t* Owner_Plane_For(const uint8_t* page) {
             if (page == nullptr) {
@@ -603,6 +638,25 @@ namespace hd_sprites {
         }
     }
 
+    void Stamp_Glass(const uint8_t* dst, uint8_t background_value) {
+        if (!enabled) {
+            return;
+        }
+        uint32_t* plane = Owner_Plane_For(video::current_video_page);
+        uint32_t* under = Under_Plane_For(video::current_video_page);
+        if (plane == nullptr || under == nullptr) {
+            return;
+        }
+        const ptrdiff_t offset = dst - video::current_video_page;
+        if (offset < 0 || offset >= (ptrdiff_t)plane_width * plane_height) {
+            return;
+        }
+        const uint32_t below = plane[offset];
+        // Keep the owner of what was underneath only if its record is still valid.
+        under[offset] = ((below != 0 && (below & 0xFF) == background_value) ? (below & ~0xFFu) : 0u) | background_value;
+        plane[offset] = Owner_For((int32_t)(offset % plane_width), (int32_t)(offset / plane_width), *dst);
+    }
+
     void Bitmap_Reset(const void* bitmap, int32_t width, int32_t height) {
         if (!enabled || bitmap == nullptr || width <= 0 || height <= 0) {
             return;
@@ -684,7 +738,11 @@ namespace hd_sprites {
         plane_off = (uint32_t*)calloc(count, sizeof(uint32_t));
         plane_back = (uint32_t*)calloc(count, sizeof(uint32_t));
         plane_published = (uint32_t*)calloc(count, sizeof(uint32_t));
-        if (plane_off == nullptr || plane_back == nullptr || plane_published == nullptr) {
+        under_off = (uint32_t*)calloc(count, sizeof(uint32_t));
+        under_back = (uint32_t*)calloc(count, sizeof(uint32_t));
+        under_published = (uint32_t*)calloc(count, sizeof(uint32_t));
+        if (plane_off == nullptr || plane_back == nullptr || plane_published == nullptr || under_off == nullptr ||
+            under_back == nullptr || under_published == nullptr) {
             Free_Planes();
             enabled = false;
             return;
@@ -697,7 +755,11 @@ namespace hd_sprites {
         free(plane_off);
         free(plane_back);
         free(plane_published);
+        free(under_off);
+        free(under_back);
+        free(under_published);
         plane_off = plane_back = plane_published = nullptr;
+        under_off = under_back = under_published = nullptr;
         plane_width = plane_height = 0;
     }
 
@@ -706,6 +768,7 @@ namespace hd_sprites {
         uint32_t* dst = Owner_Plane_For(dst_page);
         if (src != nullptr && dst != nullptr && src != dst) {
             memcpy(dst, src, (size_t)plane_width * plane_height * sizeof(uint32_t));
+            memcpy(Under_Plane_For(dst_page), Under_Plane_For(src_page), (size_t)plane_width * plane_height * sizeof(uint32_t));
         }
     }
 
@@ -713,8 +776,81 @@ namespace hd_sprites {
         (void)published_page_pixels;
         if (plane_off != nullptr && plane_published != nullptr) {
             memcpy(plane_published, plane_off, (size_t)plane_width * plane_height * sizeof(uint32_t));
+            memcpy(under_published, under_off, (size_t)plane_width * plane_height * sizeof(uint32_t));
+            for (int32_t i = 0; i < 16; ++i) {
+                // Glass colours are 6-bit VGA values like the palette.
+                glass_published[i].intensity = video::glass_colors[i].intensity;
+                glass_published[i].r = (uint8_t)((video::glass_colors[i].r & 0x3F) * 255 / 63);
+                glass_published[i].g = (uint8_t)((video::glass_colors[i].g & 0x3F) * 255 / 63);
+                glass_published[i].b = (uint8_t)((video::glass_colors[i].b & 0x3F) * 255 / 63);
+            }
         }
     }
+
+    namespace {
+
+        uint32_t Blend(uint32_t over, uint32_t under, uint32_t alpha) {
+            const uint32_t inv = 255u - alpha;
+            const uint32_t r = (((over >> 16) & 0xFF) * alpha + ((under >> 16) & 0xFF) * inv) / 255u;
+            const uint32_t g = (((over >> 8) & 0xFF) * alpha + ((under >> 8) & 0xFF) * inv) / 255u;
+            const uint32_t b = ((over & 0xFF) * alpha + (under & 0xFF) * inv) / 255u;
+            return 0xFF000000u | (r << 16) | (g << 8) | b;
+        }
+
+        uint32_t Apply_Glass(uint32_t rgb, int32_t level) {
+            const s_glass& glass = glass_published[level & 15];
+            if (glass.intensity == 0) {
+                return rgb;
+            }
+            const uint32_t tint = 0xFF000000u | ((uint32_t)glass.r << 16) | ((uint32_t)glass.g << 8) | glass.b;
+            return Blend(tint, rgb, glass.intensity >= 100 ? 255u : (uint32_t)glass.intensity * 255u / 100u);
+        }
+
+        // HD colour of the art recorded in `under` at sub-pixel (sx, sy) of page pixel (x, y),
+        // over the flat original colour of that pixel.
+        uint32_t Under_Color(uint32_t under, int32_t x, int32_t y, int32_t sx, int32_t sy, const uint32_t* palette) {
+            const uint32_t flat = palette[under & 0xFF];
+            const uint32_t id = under >> 8;
+            if (id == 0) {
+                return flat;
+            }
+            const s_command& command = commands[id];
+            const bool glyph = command.kind == COMMAND_GLYPH;
+            const s_hd_asset* asset = nullptr;
+            const s_hd_frame* frame = nullptr;
+            if (glyph) {
+                frame = Glyph_Frame(command.asset, command.frame);
+            } else if (command.asset >= 0 && command.asset < asset_count) {
+                asset = assets[command.asset];
+                frame = Resolve_Frame(asset, command.frame);
+            }
+            if (frame == nullptr) {
+                return flat;
+            }
+            const int32_t s = HD_SPRITES_SCALE;
+            const int32_t lx = (x - command.x - frame->origin_x) * s + sx;
+            const int32_t ly = (y - command.y - frame->origin_y) * s + sy;
+            if (lx < 0 || ly < 0 || lx >= frame->width || ly >= frame->height) {
+                return flat;
+            }
+            const size_t i = (size_t)ly * frame->width + lx;
+            uint8_t index = frame->index[i];
+            const uint8_t alpha = frame->alpha[i];
+            if (alpha == 0) {
+                return flat;
+            }
+            if (glyph) {
+                if (index < 1 || index > 8) {
+                    return flat;
+                }
+                index = command.colors[index - 1];
+            } else if (asset->glassed && index >= HD_GLASS_FIRST) {
+                return flat;
+            }
+            return alpha == 255 ? palette[index] : Blend(palette[index], flat, alpha);
+        }
+
+    } // namespace
 
     int32_t Compose(const s_compose_input* in, uint32_t* output) {
         const int32_t s = HD_SPRITES_SCALE;
@@ -807,6 +943,10 @@ namespace hd_sprites {
                             }
                             index = command.colors[index - 1];
                         } else if (asset->glassed && index >= HD_GLASS_FIRST) {
+                            // Translucent pixel: tint the HD art that was underneath.
+                            const uint32_t tinted = Apply_Glass(
+                                Under_Color(under_published[i], x, y, sx, sy, palette), index - HD_GLASS_FIRST);
+                            out[sx] = alpha == 255 ? tinted : Blend(tinted, out[sx], alpha);
                             continue;
                         }
                         const uint32_t color = palette[index];
@@ -831,7 +971,12 @@ namespace hd_sprites {
         if (stats_enabled && (++stats_compose_calls % 100) == 0) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "hd stats: compose owned=%d stale=%d replaced=%d (glyph %d); glyph commands %u, glyphs without art %u",
-                owned_pixels, stale_pixels, replaced, replaced_glyph, stats_glyph_commands, stats_glyph_missing_art);
+                owned_pixels,
+                stale_pixels,
+                replaced,
+                replaced_glyph,
+                stats_glyph_commands,
+                stats_glyph_missing_art);
         }
         return replaced;
     }

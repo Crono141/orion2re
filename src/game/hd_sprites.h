@@ -52,6 +52,11 @@ namespace hd_sprites {
     // Owner layer of a rectangle of the current page captured into `bitmap`.
     void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height);
 
+    // A glass pixel was written at `dst`: the page held `background_value` before the glass
+    // remap replaced it. The owner of what was underneath is kept so the compositor can tint
+    // the HD art below in true colour.
+    void Stamp_Glass(const uint8_t* dst, uint8_t background_value);
+
     // Records that `count` pixels at `dst` (inside the current video page) were written.
     void Stamp_Run(const uint8_t* dst, int32_t count);
 
