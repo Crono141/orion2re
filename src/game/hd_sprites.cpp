@@ -84,6 +84,23 @@ namespace hd_sprites {
         uint32_t stats_glyph_missing_art;
         uint32_t stats_publishes;
         uint32_t stats_settled_pixels;
+        // Game-thread time per stage (ORION2RE_HD_STATS), reported with the settle count.
+        enum e_timer { TIMER_RENDER,
+            TIMER_COPY,
+            TIMER_PUBLISH,
+            TIMER_COUNT };
+        uint64_t stats_timer_ns[TIMER_COUNT];
+
+        struct s_scoped_timer {
+            e_timer timer;
+            uint64_t start;
+            explicit s_scoped_timer(e_timer which) : timer(which), start(stats_enabled ? SDL_GetTicksNS() : 0) {}
+            ~s_scoped_timer() {
+                if (stats_enabled) {
+                    stats_timer_ns[timer] += SDL_GetTicksNS() - start;
+                }
+            }
+        };
         // ORION2RE_HD_DEBUG=sd: tint blocks that fell back to the enlarged original because
         // unhooked code changed the page pixel.
         bool debug_sd;
@@ -747,6 +764,10 @@ namespace hd_sprites {
         }
 
         void Flush_Pending() {
+            if (pending.empty()) {
+                return;
+            }
+            s_scoped_timer timer(TIMER_RENDER);
             while (!pending.empty()) {
                 s_surface* target = pending.front().target;
                 Render_Pending_Target(*target);
@@ -1236,6 +1257,7 @@ namespace hd_sprites {
             return;
         }
         Flush_Pending();
+        s_scoped_timer timer(TIMER_COPY);
         dst->hd = src->hd;
         dst->shadow = src->shadow;
         std::fill(dst->row_dirty.begin(), dst->row_dirty.end(), (uint8_t)1);
@@ -1249,6 +1271,7 @@ namespace hd_sprites {
             return;
         }
         Flush_Pending();
+        s_scoped_timer timer(TIMER_COPY);
         const size_t stride = (size_t)src->width * S;
         while (count > 0) {
             const int32_t x = offset % src->width;
@@ -1271,13 +1294,21 @@ namespace hd_sprites {
             return;
         }
         Flush_Pending();
+        s_scoped_timer timer(TIMER_PUBLISH);
         // Settle pixels changed by code without hooks: the original pixel, enlarged.
         const uint32_t settled = Settle(page_off, video::g_page_off.pixels, 0, 0, page_off.width, page_off.height);
         if (stats_enabled) {
             stats_settled_pixels += settled;
             if (++stats_publishes % 100 == 0) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: %u pixels settled to plain scaling over the last 100 frames", stats_settled_pixels);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "hd stats: %u pixels settled to plain scaling over the last 100 frames; per frame: render %.2f ms, "
+                    "page copies %.2f ms, publish %.2f ms",
+                    stats_settled_pixels,
+                    (double)stats_timer_ns[TIMER_RENDER] / 1e8,
+                    (double)stats_timer_ns[TIMER_COPY] / 1e8,
+                    (double)stats_timer_ns[TIMER_PUBLISH] / 1e8);
                 stats_settled_pixels = 0;
+                memset(stats_timer_ns, 0, sizeof(stats_timer_ns));
             }
         }
         const size_t row_size = (size_t)page_off.width * S * S;
