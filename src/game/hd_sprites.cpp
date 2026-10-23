@@ -122,6 +122,7 @@ namespace hd_sprites {
         uint32_t stats_glyph_commands;
         uint32_t stats_glyph_missing_art;
         uint32_t stats_compose_calls;
+        bool debug_stale;
 
         void Stats_Missing(const std::string& key) {
             stats_missing[key]++;
@@ -462,6 +463,8 @@ namespace hd_sprites {
         enabled = vfs::File_Exists("hd/pack.json") != 0;
         const char* stats = SDL_getenv("ORION2RE_HD_STATS");
         stats_enabled = enabled && stats != nullptr;
+        const char* debug = SDL_getenv("ORION2RE_HD_DEBUG");
+        debug_stale = enabled && debug != nullptr && strcmp(debug, "stale") == 0;
         if (stats_enabled && atoi(stats) > 1) {
             stats_interval = (uint32_t)atoi(stats);
         }
@@ -725,6 +728,15 @@ namespace hd_sprites {
                 if (owner == 0 || (owner & 0xFF) != in->page[i]) {
                     if (owner != 0) {
                         stale_pixels++;
+                        if (debug_stale) {
+                            // ORION2RE_HD_DEBUG=stale: tint pixels whose owner record went stale.
+                            for (int32_t sy = 0; sy < s; ++sy) {
+                                uint32_t* out = output + (size_t)(y * s + sy) * out_width + (size_t)x * s;
+                                for (int32_t sx = 0; sx < s; ++sx) {
+                                    out[sx] = (out[sx] & 0xFF7F7F7Fu) | 0x00800000u;
+                                }
+                            }
+                        }
                     }
                     continue;
                 }
