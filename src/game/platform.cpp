@@ -901,6 +901,9 @@ namespace platform {
         // HD sprite composition: a 4x frame built from the scaler output plus HD sprite art.
         SDL_Texture* g_hd_texture;
         uint32_t* g_hd_pixels;
+        // False until the HD texture holds a complete frame (first frame, failed upload, window
+        // exposed or renderer reset).
+        bool g_hd_frame_valid;
 
         bool Present_HD_Frame() {
             const int32_t width = video::g_screen_res_x * HD_SPRITES_SCALE;
@@ -932,7 +935,6 @@ namespace platform {
             // Recompose only what the scaler reports as changed (it compares final colours, so
             // palette fades and cycling count); everything on the first frame.
             static std::vector<hd_sprites::s_rect> rects;
-            static bool hd_frame_valid;
             rects.clear();
             const int32_t region_count = scalers::Get_Dirty_Region_Count(&g_present_scaler_pipeline);
             const scalers::s_region* regions = scalers::Get_Dirty_Regions(&g_present_scaler_pipeline);
@@ -945,10 +947,12 @@ namespace platform {
                 const int32_t y1 = (region.y + region.height + factor - 1) / factor;
                 rects.push_back({x0, y0, x1 - x0, y1 - y0});
             }
-            const bool full = !hd_frame_valid;
+            // Owners can change where colours did not (one portrait replacing another).
+            const bool owners_full = hd_sprites::Take_Owner_Changes(&rects);
+            const bool full = !g_hd_frame_valid || owners_full;
             input.rects = full ? nullptr : rects.data();
             input.rect_count = full ? 0 : (int32_t)rects.size();
-            hd_frame_valid = true;
+            g_hd_frame_valid = true;
 
             const uint64_t compose_start = SDL_GetPerformanceCounter();
             const int32_t replaced = hd_sprites::Compose(&input, g_hd_pixels);
@@ -988,7 +992,7 @@ namespace platform {
                 }
             }
             if (!uploaded) {
-                hd_frame_valid = false;
+                g_hd_frame_valid = false;
                 return false;
             }
             Present_Texture_To_Output(g_hd_texture, true);
@@ -1411,7 +1415,10 @@ namespace platform {
                 event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
                 event.type == SDL_EVENT_WINDOW_RESTORED ||
                 event.type == SDL_EVENT_WINDOW_MAXIMIZED ||
-                event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
+                event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
+                event.type == SDL_EVENT_RENDER_TARGETS_RESET ||
+                event.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+                g_hd_frame_valid = false;
                 Queue_Debug_Overlay_Display_Size();
                 Request_Present_Refresh();
                 continue;
@@ -1561,6 +1568,7 @@ namespace platform {
         for (int32_t y = 0; y < video::g_screen_res_y; ++y) {
             memcpy(dst + y * video::g_screen_res_x, src + y * video::g_screen_res_x, (size_t)video::g_screen_res_x);
         }
+        hd_sprites::Snapshot_Plane();
     }
 
     void Force_Cursor_Pos(int16_t x, int16_t y) {

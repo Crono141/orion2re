@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include <vector>
+
 struct s_animation_header;
 
 namespace video {
@@ -103,6 +105,14 @@ namespace hd_sprites {
         const s_rect* rects; // areas to recompose, or nullptr for the whole frame
         int32_t rect_count;
     };
+
+    // Presenter side: copies the published owners for compositing. Call it together with the
+    // copy of the published page, while the game thread cannot publish a newer frame.
+    void Snapshot_Plane();
+
+    // Appends the areas whose owners changed since the last call (HD art can change where the
+    // 8-bit colours did not). Returns true when everything must be recomposed.
+    bool Take_Owner_Changes(std::vector<s_rect>* rects);
 
     // Writes the 4x composited frame (width*4 x height*4 ARGB8888) to `output`, limited to
     // input->rects when given (output outside them is left untouched).
