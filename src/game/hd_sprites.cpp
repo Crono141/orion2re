@@ -509,6 +509,19 @@ namespace hd_sprites {
             return nullptr;
         }
 
+        // Blocks whose page pixel was changed by code without hooks are replaced by the original
+        // pixel enlarged. Runs over each publish, and over a draw's area before HD art is blended
+        // into it, so soft edges never blend over leftovers of an earlier screen.
+        uint32_t Settle(s_surface& surface, const uint8_t* page, int32_t x0, int32_t y0, int32_t x1, int32_t y1);
+
+        void Settle_Draw_Area(int32_t x0, int32_t y0, int32_t x1, int32_t y1) {
+            if (page_off.hd.empty()) {
+                return;
+            }
+            (void)Settle(page_off, video::g_page_off.pixels, x0, y0, x1, y1);
+            (void)Settle(page_back, video::g_page_back.pixels, x0, y0, x1, y1);
+        }
+
         // ------------------------------------------------------------- current draw
 
         enum e_source {
@@ -770,6 +783,14 @@ namespace hd_sprites {
             Render_Now(target, offset, value, level);
         }
 
+        // Settles the area the current art draw can touch, fringe included.
+        void Settle_Art_Area() {
+            const s_hd_frame* frame = draw.frame;
+            const int32_t left = draw.x + frame->origin_x;
+            const int32_t top = draw.y + frame->origin_y;
+            Settle_Draw_Area(left - 1, top - 1, left + (frame->width + S - 1) / S + 1, top + (frame->height + S - 1) / S + 1);
+        }
+
         // Sets up the current draw for `anim` drawn with its top-left at (x, y).
         void Begin_Source(const s_animation_header* anim, int16_t x, int16_t y) {
             Start_Draw();
@@ -792,6 +813,7 @@ namespace hd_sprites {
                 draw.image = &image->second;
                 draw.image_x = x;
                 draw.image_y = y;
+                Settle_Draw_Area(x, y, x + anim->width, y + anim->height);
                 return;
             }
             const auto found = registrations.find(anim);
@@ -829,6 +851,30 @@ namespace hd_sprites {
             draw.x = x;
             draw.y = y;
             draw.glassed = asset->glassed || (anim->flags & ANIMATION_FLAG_GLASSED) != 0;
+            Settle_Art_Area();
+        }
+
+        uint32_t Settle(s_surface& surface, const uint8_t* page, int32_t x0, int32_t y0, int32_t x1, int32_t y1) {
+            if (surface.hd.empty() || page == nullptr) {
+                return 0;
+            }
+            x0 = SDL_max(x0, 0);
+            y0 = SDL_max(y0, 0);
+            x1 = SDL_min(x1, surface.width);
+            y1 = SDL_min(y1, surface.height);
+            uint32_t settled = 0;
+            for (int32_t y = y0; y < y1; ++y) {
+                const size_t row = (size_t)y * surface.width;
+                for (int32_t x = x0; x < x1; ++x) {
+                    if (surface.shadow[row + x] != page[row + x]) {
+                        const uint8_t value = page[row + x];
+                        surface.shadow[row + x] = value;
+                        Fill_Block(surface, x, y, debug_sd ? Literal(Mix(0xFF0000u, Base_Rgb(value), 96)) : Indexed(value));
+                        settled++;
+                    }
+                }
+            }
+            return settled;
         }
 
     } // namespace
@@ -975,6 +1021,7 @@ namespace hd_sprites {
         draw.x = x;
         draw.y = y;
         memcpy(draw.colors, colors, sizeof(draw.colors));
+        Settle_Art_Area();
         if (probe_x >= 0) {
             draw.name = std::string("glyph:") + font_file + "/" + std::to_string(font_index) + "/" + std::to_string(code);
         }
@@ -1005,6 +1052,7 @@ namespace hd_sprites {
         draw.x = x;
         draw.y = y;
         draw.glassed = asset->glassed;
+        Settle_Art_Area();
         if (probe_x >= 0) {
             draw.name = asset->directory;
         }
@@ -1202,19 +1250,7 @@ namespace hd_sprites {
         }
         Flush_Pending();
         // Settle pixels changed by code without hooks: the original pixel, enlarged.
-        const uint8_t* page = video::g_page_off.pixels;
-        uint32_t settled = 0;
-        for (int32_t y = 0; y < page_off.height; ++y) {
-            const size_t row = (size_t)y * page_off.width;
-            for (int32_t x = 0; x < page_off.width; ++x) {
-                if (page_off.shadow[row + x] != page[row + x]) {
-                    const uint8_t value = page[row + x];
-                    page_off.shadow[row + x] = value;
-                    Fill_Block(page_off, x, y, debug_sd ? Literal(Mix(0xFF0000u, Base_Rgb(value), 96)) : Indexed(value));
-                    settled++;
-                }
-            }
-        }
+        const uint32_t settled = Settle(page_off, video::g_page_off.pixels, 0, 0, page_off.width, page_off.height);
         if (stats_enabled) {
             stats_settled_pixels += settled;
             if (++stats_publishes % 100 == 0) {
