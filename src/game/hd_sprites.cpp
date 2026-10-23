@@ -1083,6 +1083,28 @@ namespace hd_sprites {
         }
     }
 
+    void Overwrite_Rect(const uint8_t* page, int32_t x1, int32_t y1, int32_t x2, int32_t y2) {
+        if (!enabled) {
+            return;
+        }
+        s_surface* target = Page_Surface(page);
+        if (target == nullptr) {
+            return;
+        }
+        Flush_Pending();
+        x1 = SDL_max(x1, 0);
+        y1 = SDL_max(y1, 0);
+        x2 = SDL_min(x2, target->width - 1);
+        y2 = SDL_min(y2, target->height - 1);
+        for (int32_t y = y1; y <= y2; ++y) {
+            const size_t row = (size_t)y * target->width;
+            for (int32_t x = x1; x <= x2; ++x) {
+                target->shadow[row + x] = page[row + x];
+                Fill_Block(*target, x, y, Indexed(page[row + x]));
+            }
+        }
+    }
+
     void Stamp_Glass(const uint8_t* dst, uint8_t background_value, int32_t level) {
         (void)background_value;
         if (!enabled) {
