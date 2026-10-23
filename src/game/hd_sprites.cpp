@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -1362,40 +1363,59 @@ namespace hd_sprites {
         last_fade = present_fade;
         const uint32_t fade = present_fade;
         const size_t row_size = (size_t)page_present.width * S * S;
-        int32_t first = -1;
-        int32_t last = -1;
+        std::vector<int32_t> rows;
         for (int32_t y = 0; y < page_present.height; ++y) {
-            if (!all && page_present.row_dirty[(size_t)y] == 0) {
-                continue;
-            }
-            page_present.row_dirty[(size_t)y] = 0;
-            if (first < 0) {
-                first = y;
-            }
-            last = y;
-            const uint32_t* src = &page_present.hd[(size_t)y * row_size];
-            uint32_t* dst = output + (size_t)y * row_size;
-            for (size_t i = 0; i < row_size; ++i) {
-                const uint32_t pixel = src[i];
-                uint32_t rgb;
-                if ((pixel & HD_LITERAL) != 0) {
-                    rgb = pixel & 0xFFFFFFu;
-                    if (fade < 256) {
-                        rgb = ((((rgb >> 16) & 0xFF) * fade >> 8) << 16) | ((((rgb >> 8) & 0xFF) * fade >> 8) << 8) |
-                            ((rgb & 0xFF) * fade >> 8);
-                    }
-                } else {
-                    const uint32_t alpha = (pixel >> 16) & 0xFF;
-                    rgb = colors[pixel & 0xFF];
-                    if (alpha < 255) {
-                        rgb = Mix(rgb, (pixel & HD_CLEAR) != 0 ? 0u : colors[(pixel >> 8) & 0xFF], alpha);
-                    }
-                }
-                dst[i] = 0xFF000000u | rgb;
+            if (all || page_present.row_dirty[(size_t)y] != 0) {
+                page_present.row_dirty[(size_t)y] = 0;
+                rows.push_back(y);
             }
         }
-        if (first < 0) {
+        if (rows.empty()) {
             return false;
+        }
+        const int32_t first = rows.front();
+        const int32_t last = rows.back();
+        auto resolve_rows = [&](size_t begin, size_t end) {
+            for (size_t r = begin; r < end; ++r) {
+                const int32_t y = rows[r];
+                const uint32_t* src = &page_present.hd[(size_t)y * row_size];
+                uint32_t* dst = output + (size_t)y * row_size;
+                for (size_t i = 0; i < row_size; ++i) {
+                    const uint32_t pixel = src[i];
+                    uint32_t rgb;
+                    if ((pixel & HD_LITERAL) != 0) {
+                        rgb = pixel & 0xFFFFFFu;
+                        if (fade < 256) {
+                            rgb = ((((rgb >> 16) & 0xFF) * fade >> 8) << 16) | ((((rgb >> 8) & 0xFF) * fade >> 8) << 8) |
+                                ((rgb & 0xFF) * fade >> 8);
+                        }
+                    } else {
+                        const uint32_t alpha = (pixel >> 16) & 0xFF;
+                        rgb = colors[pixel & 0xFF];
+                        if (alpha < 255) {
+                            rgb = Mix(rgb, (pixel & HD_CLEAR) != 0 ? 0u : colors[(pixel >> 8) & 0xFF], alpha);
+                        }
+                    }
+                    dst[i] = 0xFF000000u | rgb;
+                }
+            }
+        };
+        // Whole-screen updates (palette fades and cycling) are split across threads.
+        const size_t workers = rows.size() >= 64 ? SDL_min((size_t)8, (size_t)SDL_max(1, SDL_GetNumLogicalCPUCores() / 2)) : 1;
+        if (workers <= 1) {
+            resolve_rows(0, rows.size());
+        } else {
+            std::vector<std::thread> threads;
+            const size_t chunk = (rows.size() + workers - 1) / workers;
+            for (size_t w = 1; w < workers; ++w) {
+                const size_t begin = SDL_min(rows.size(), w * chunk);
+                const size_t end = SDL_min(rows.size(), begin + chunk);
+                threads.emplace_back(resolve_rows, begin, end);
+            }
+            resolve_rows(0, SDL_min(rows.size(), chunk));
+            for (std::thread& thread : threads) {
+                thread.join();
+            }
         }
         *row_first = first * S;
         *row_last = (last + 1) * S;
