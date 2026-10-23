@@ -50,6 +50,8 @@ namespace hd_sprites {
             int32_t height;
             uint8_t* index;
             uint8_t* alpha;
+            uint8_t* rgb;     // full-colour art (RGB per pixel) instead of index, or null
+            bool full_colour; // the PNG is RGBA (sprite.json "format": "rgba")
             std::atomic<uint8_t> load;
             std::string vfs_path;        // hd/<LBX>/<EEE>/<FFF>.png
             std::string disk_path;       // the same file on disk when it is not inside a zip
@@ -220,7 +222,7 @@ namespace hd_sprites {
                 return false;
             }
             const size_t count = (size_t)frame->width * (size_t)frame->height;
-            uint8_t* index = (uint8_t*)malloc(count);
+            uint8_t* index = (uint8_t*)malloc(frame->full_colour ? count * 3 : count);
             uint8_t* alpha = (uint8_t*)malloc(count);
             if (index == nullptr || alpha == nullptr) {
                 free(index);
@@ -231,13 +233,24 @@ namespace hd_sprites {
             for (int32_t y = 0; y < frame->height; ++y) {
                 const uint8_t* row = (const uint8_t*)rgba->pixels + (size_t)y * (size_t)rgba->pitch;
                 for (int32_t x = 0; x < frame->width; ++x) {
-                    // Grey PNGs expand to R = G = B = palette index.
-                    index[(size_t)y * frame->width + x] = row[x * 4 + 0];
-                    alpha[(size_t)y * frame->width + x] = row[x * 4 + 3];
+                    const size_t i = (size_t)y * frame->width + x;
+                    if (frame->full_colour) {
+                        index[i * 3 + 0] = row[x * 4 + 0];
+                        index[i * 3 + 1] = row[x * 4 + 1];
+                        index[i * 3 + 2] = row[x * 4 + 2];
+                    } else {
+                        // Grey PNGs expand to R = G = B = palette index.
+                        index[i] = row[x * 4 + 0];
+                    }
+                    alpha[i] = row[x * 4 + 3];
                 }
             }
             SDL_DestroySurface(rgba);
-            frame->index = index;
+            if (frame->full_colour) {
+                frame->rgb = index;
+            } else {
+                frame->index = index;
+            }
             frame->alpha = alpha;
             return true;
         }
@@ -275,6 +288,10 @@ namespace hd_sprites {
         int64_t cache_budget = (int64_t)4096 << 20;
         bool workers_started;
 
+        int64_t Frame_Bytes(const s_hd_frame& frame) {
+            return (int64_t)frame.width * frame.height * (frame.full_colour ? 4 : 2);
+        }
+
         void Worker() {
             for (;;) {
                 s_hd_frame* frame = nullptr;
@@ -297,7 +314,7 @@ namespace hd_sprites {
                     std::vector<uint8_t>().swap(frame->packed);
                 }
                 if (ok) {
-                    decoded_bytes += (int64_t)frame->width * frame->height * 2;
+                    decoded_bytes += Frame_Bytes(*frame);
                 }
                 frame->load.store(ok ? LOAD_READY : LOAD_FAILED, std::memory_order_release);
             }
@@ -364,6 +381,8 @@ namespace hd_sprites {
             }
             asset->scale = (int32_t)yyjson_get_int(yyjson_obj_get(root, "scale"));
             asset->glassed = yyjson_get_bool(yyjson_obj_get(root, "glassed"));
+            const char* format = yyjson_get_str(yyjson_obj_get(root, "format"));
+            const bool full_colour = format != nullptr && strcmp(format, "rgba") == 0;
             yyjson_val* source_hash = yyjson_obj_get(root, "source_hash");
             asset->has_source_hash = yyjson_is_uint(source_hash) || yyjson_is_int(source_hash);
             asset->source_hash = asset->has_source_hash ? (uint32_t)yyjson_get_uint(source_hash) : 0;
@@ -397,6 +416,7 @@ namespace hd_sprites {
                 char name[16];
                 snprintf(name, sizeof(name), "/%03d.png", frame_number);
                 frame->vfs_path = asset->directory + name;
+                frame->full_colour = full_colour;
                 char disk[1024];
                 if (vfs::Resolve_Read_Path_No_Zip(frame->vfs_path.c_str(), disk, sizeof(disk)) != 0) {
                     frame->disk_path = disk;
@@ -447,8 +467,9 @@ namespace hd_sprites {
                     }
                     free(frame.index);
                     free(frame.alpha);
-                    frame.index = frame.alpha = nullptr;
-                    decoded_bytes -= (int64_t)frame.width * frame.height * 2;
+                    free(frame.rgb);
+                    frame.index = frame.alpha = frame.rgb = nullptr;
+                    decoded_bytes -= Frame_Bytes(frame);
                     frame.load.store(LOAD_NONE, std::memory_order_release);
                 }
             }
@@ -806,6 +827,13 @@ namespace hd_sprites {
             const uint32_t alpha = frame->alpha[i];
             if (alpha == 0) {
                 return dest;
+            }
+            if (frame->rgb != nullptr) {
+                uint32_t rgb = ((uint32_t)frame->rgb[i * 3] << 16) | ((uint32_t)frame->rgb[i * 3 + 1] << 8) | frame->rgb[i * 3 + 2];
+                if (!draw.shade.empty()) {
+                    rgb = Shade(rgb, x - draw.x, y - draw.y, sx, sy);
+                }
+                return Over_Rgb(dest, rgb, alpha);
             }
             uint8_t index = frame->index[i];
             if (draw.glyph) {
