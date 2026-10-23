@@ -317,6 +317,7 @@ namespace buffer {
         }
 
         vfs::fclose(file);
+        hd_sprites::Register_Load(loaded_data, (int32_t)entry_size, file_name, entry_index);
         return loaded_data;
     }
 
