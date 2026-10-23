@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 struct s_animation_header;
@@ -39,6 +40,9 @@ namespace hd_sprites {
 
     // Called for every LBX entry loaded into memory.
     void Register_Load(const void* data, int32_t size, const char* lbx_name, int32_t entry);
+    // The loaded entries in [begin, end) were freed, or moved by `delta` bytes (cache compaction).
+    void Forget_Loads(const void* begin, const void* end);
+    void Move_Loads(const void* begin, const void* end, ptrdiff_t delta);
 
     // Brackets one sprite draw; blitters stamp the pixels they write in between.
     void Begin_Draw(const s_animation_header* anim, int16_t x, int16_t y);
