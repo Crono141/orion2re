@@ -211,6 +211,7 @@ namespace bitmap {
         uint8_t* remap_table = video::glass_remap_colors[tint_color_index];
 
         Tint_Bitmap_Pixels(src_pixels, remap_table, 0, dest_pixels, width, height);
+        hd_sprites::Bitmap_Glass(dest, dest_pixels, tint_color_index);
     }
 
     void __cdecl Mask_Out_Bitmap_With_Bitmap(int16_t x, int16_t y, s_animation_header* dest, s_animation_header* src, int16_t type) {
@@ -561,6 +562,7 @@ namespace bitmap {
         animate::animation_header = anim;
         uint32_t* pixels = (uint32_t*)Animation_Frame_Data_(anim, anim->current_frame);
         shear::Mask_Bitmap_Colors_Pixels(pixels, start_color, end_color, 0, anim->width, anim->height);
+        hd_sprites::Bitmap_Sync(anim, (const uint8_t*)pixels);
     }
 
     void __cdecl Mask_Brighten_Bitmap(int32_t x, int32_t y, s_animation_header* dst_anim, s_animation_header* src_anim, uint8_t color) {
