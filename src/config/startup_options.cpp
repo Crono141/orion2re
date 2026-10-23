@@ -69,6 +69,10 @@ namespace config {
                 options->skip_intro = true;
                 continue;
             }
+            if (strcmp(argv[index], "--no-exit-message") == 0) {
+                options->no_exit_message = true;
+                continue;
+            }
 
             bool matched = false;
             std::string value;

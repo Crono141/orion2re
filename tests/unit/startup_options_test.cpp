@@ -37,7 +37,11 @@ DOCTEST_TEST_CASE("--skip-intro is consumed and not forwarded") {
     DOCTEST_CHECK_FALSE(options.skip_intro);
     DOCTEST_REQUIRE(Parse({"-x", "--skip-intro", "--profile", "a"}, &options, &error));
     DOCTEST_CHECK(options.skip_intro);
+    DOCTEST_CHECK_FALSE(options.no_exit_message);
     DOCTEST_CHECK(options.remaining_command_line == "-x");
+    DOCTEST_REQUIRE(Parse({"--no-exit-message"}, &options, &error));
+    DOCTEST_CHECK(options.no_exit_message);
+    DOCTEST_CHECK(options.remaining_command_line.empty());
 }
 
 DOCTEST_TEST_CASE("--load-save takes a save number from 1 to 10") {

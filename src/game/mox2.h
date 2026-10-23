@@ -16,6 +16,8 @@ namespace MOX2 {
     extern uint8_t user_wants_n_space_monsters;
     extern uint8_t pan_main_menu_panel;
     extern uint8_t skip_intro;
+    // Set by --no-exit-message: quit without the "Thanks for playing" message box.
+    extern uint8_t quiet_exit;
     extern uint8_t quick_start;
     extern char leave_game_message[100];
 
