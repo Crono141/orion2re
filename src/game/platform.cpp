@@ -930,6 +930,28 @@ namespace platform {
             if (input.base == nullptr || input.base_factor <= 0) {
                 return false;
             }
+
+            // Recompose only what the scaler reports as changed (it compares final colours, so
+            // palette fades and cycling count); everything on the first frame.
+            static std::vector<hd_sprites::s_rect> rects;
+            static bool hd_frame_valid;
+            rects.clear();
+            const int32_t region_count = scalers::Get_Dirty_Region_Count(&g_present_scaler_pipeline);
+            const scalers::s_region* regions = scalers::Get_Dirty_Regions(&g_present_scaler_pipeline);
+            const int32_t factor = input.base_factor;
+            for (int32_t r = 0; r < region_count; ++r) {
+                const scalers::s_region& region = regions[r];
+                const int32_t x0 = region.x / factor;
+                const int32_t y0 = region.y / factor;
+                const int32_t x1 = (region.x + region.width + factor - 1) / factor;
+                const int32_t y1 = (region.y + region.height + factor - 1) / factor;
+                rects.push_back({x0, y0, x1 - x0, y1 - y0});
+            }
+            const bool full = !hd_frame_valid;
+            input.rects = full ? nullptr : rects.data();
+            input.rect_count = full ? 0 : (int32_t)rects.size();
+            hd_frame_valid = true;
+
             const uint64_t compose_start = SDL_GetPerformanceCounter();
             const int32_t replaced = hd_sprites::Compose(&input, g_hd_pixels);
             static double compose_ms_total;
@@ -955,7 +977,20 @@ namespace platform {
                 }
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd: frame %u, %d source pixels replaced", hd_frame_counter, replaced);
             }
-            if (!SDL_UpdateTexture(g_hd_texture, nullptr, g_hd_pixels, width * (int32_t)sizeof(uint32_t))) {
+            bool uploaded = true;
+            if (full) {
+                uploaded = SDL_UpdateTexture(g_hd_texture, nullptr, g_hd_pixels, width * (int32_t)sizeof(uint32_t));
+            } else {
+                const int32_t s = HD_SPRITES_SCALE;
+                for (const hd_sprites::s_rect& rect : rects) {
+                    const SDL_Rect area = {rect.x * s, rect.y * s, rect.width * s, rect.height * s};
+                    uploaded = uploaded &&
+                        SDL_UpdateTexture(g_hd_texture, &area, g_hd_pixels + (size_t)area.y * width + area.x,
+                            width * (int32_t)sizeof(uint32_t));
+                }
+            }
+            if (!uploaded) {
+                hd_frame_valid = false;
                 return false;
             }
             Present_Texture_To_Output(g_hd_texture);

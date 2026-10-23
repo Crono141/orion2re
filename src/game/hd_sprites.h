@@ -70,6 +70,14 @@ namespace hd_sprites {
     void Copy_Plane(const uint8_t* src_page, const uint8_t* dst_page);
     void Publish_Plane(const uint8_t* published_page_pixels);
 
+    // A rectangle in source (640x480) pixels.
+    struct s_rect {
+        int32_t x;
+        int32_t y;
+        int32_t width;
+        int32_t height;
+    };
+
     struct s_compose_input {
         const uint8_t* page;                   // published 8-bit page
         const video::s_palette_color* palette; // palette submitted with the page
@@ -81,9 +89,12 @@ namespace hd_sprites {
         int32_t cursor_x; // source-space cursor rectangle to keep, or -1
         int32_t cursor_y;
         int32_t cursor_size;
+        const s_rect* rects; // areas to recompose, or nullptr for the whole frame
+        int32_t rect_count;
     };
 
-    // Writes the 4x composited frame (width*4 x height*4 ARGB8888) to `output`.
+    // Writes the 4x composited frame (width*4 x height*4 ARGB8888) to `output`, limited to
+    // input->rects when given (output outside them is left untouched).
     // Returns the number of source pixels replaced with HD art.
     int32_t Compose(const s_compose_input* input, uint32_t* output);
 
