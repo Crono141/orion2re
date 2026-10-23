@@ -35,6 +35,10 @@ namespace hd_sprites {
     void Begin_Draw(const s_animation_header* anim, int16_t x, int16_t y);
     void End_Draw();
 
+    // Brackets one glyph draw (fonts::Print_Character and variants). (x, y) is the unclipped
+    // top-left of the glyph; colors are the 8 style colours the glyph's roles map to.
+    void Begin_Glyph(const char* font_file, int16_t font_index, uint8_t code, int16_t x, int16_t y, const uint8_t* colors);
+
     // Records that `count` pixels at `dst` (inside the current video page) were written.
     void Stamp_Run(const uint8_t* dst, int32_t count);
 
