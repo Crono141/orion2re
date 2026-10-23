@@ -707,14 +707,18 @@ namespace hd_sprites {
     }
 
     void Stamp_Run(const uint8_t* dst, int32_t count) {
+        Stamp_Page(video::current_video_page, dst, count);
+    }
+
+    void Stamp_Page(const uint8_t* page, const uint8_t* dst, int32_t count) {
         if (!enabled || count <= 0) {
             return;
         }
-        uint32_t* plane = Owner_Plane_For(video::current_video_page);
+        uint32_t* plane = Owner_Plane_For(page);
         if (plane == nullptr) {
             return;
         }
-        const ptrdiff_t offset = dst - video::current_video_page;
+        const ptrdiff_t offset = dst - page;
         const ptrdiff_t limit = (ptrdiff_t)plane_width * plane_height;
         if (offset < 0 || offset + count > limit) {
             return;
@@ -741,6 +745,41 @@ namespace hd_sprites {
                 ++y;
             }
         }
+    }
+
+    void Copy_Plane_Span(const uint8_t* src_page, const uint8_t* dst_page, int32_t offset, int32_t count) {
+        if (!enabled || count <= 0 || offset < 0) {
+            return;
+        }
+        uint32_t* src = Owner_Plane_For(src_page);
+        uint32_t* dst = Owner_Plane_For(dst_page);
+        if (src == nullptr || dst == nullptr || src == dst || offset + count > plane_width * plane_height) {
+            return;
+        }
+        memcpy(dst + offset, src + offset, (size_t)count * sizeof(uint32_t));
+        memcpy(Under_Plane_For(dst_page) + offset, Under_Plane_For(src_page) + offset, (size_t)count * sizeof(uint32_t));
+    }
+
+    void Begin_Asset_Draw(const char* lbx_name, int32_t entry, int16_t frame, int16_t x, int16_t y) {
+        Clear_Draw_State();
+        if (!initialized) {
+            Initialize();
+        }
+        if (!enabled || lbx_name == nullptr) {
+            return;
+        }
+        const int32_t asset_index = Find_Or_Create_Asset(lbx_name, entry);
+        if (asset_index < 0) {
+            return;
+        }
+        s_hd_asset* asset = assets[asset_index];
+        if (!asset->loaded) {
+            Load_Asset(asset);
+        }
+        if (Resolve_Frame(asset, frame) == nullptr) {
+            return;
+        }
+        current_command = Alloc_Command({asset_index, frame, x, y, COMMAND_SPRITE, 0, 0, {}});
     }
 
     void Stamp_Glass(const uint8_t* dst, uint8_t background_value) {
