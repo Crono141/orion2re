@@ -1,0 +1,64 @@
+#pragma once
+
+#include <stdint.h>
+
+struct s_animation_header;
+
+namespace video {
+    struct s_palette_color;
+}
+
+// Present-time replacement of game sprites with higher-resolution art.
+//
+// The engine keeps drawing 8-bit pixels into its 640x480 pages. Alongside each page, an owner
+// plane records which sprite draw wrote each pixel and the value it wrote. At present time,
+// every source pixel whose page value still equals the recorded value, and whose sprite has
+// HD art, is replaced by the matching block of HD pixels. Anything that later overwrote the
+// pixel (text, fills, glass, remaps, captures) no longer matches and falls back to the normal
+// scaler output, so only the sprite blitters need to record ownership.
+//
+// HD art is read from the VFS under hd/<LBX>/<EEE>/ (sprite.json plus one PNG per frame,
+// grey = palette index, alpha = coverage), normally supplied by a mod package's data/ tree.
+// Indices are looked up in the live palette, so fades and palette cycling keep working.
+namespace hd_sprites {
+
+#define HD_SPRITES_SCALE 4
+
+    // Enables the feature when the VFS provides hd/pack.json. Safe to call more than once.
+    void Initialize();
+    bool Enabled();
+
+    // Called for every LBX entry loaded into memory.
+    void Register_Load(const void* data, int32_t size, const char* lbx_name, int32_t entry);
+
+    // Brackets one sprite draw; blitters stamp ownership for the current draw in between.
+    void Begin_Draw(const s_animation_header* anim, int16_t x, int16_t y);
+    void End_Draw();
+
+    // Records that `count` pixels at `dst` (inside the current video page) were written.
+    void Stamp_Run(const uint8_t* dst, int32_t count);
+
+    // Page plumbing: owner planes follow page allocation, copies and publishing.
+    void Allocate_Planes(int32_t width, int32_t height);
+    void Free_Planes();
+    void Copy_Plane(const uint8_t* src_page, const uint8_t* dst_page);
+    void Publish_Plane(const uint8_t* published_page_pixels);
+
+    struct s_compose_input {
+        const uint8_t* page;                   // published 8-bit page
+        const video::s_palette_color* palette; // palette submitted with the page
+        const uint32_t* base;                  // scaler output, ARGB8888
+        int32_t base_stride;                   // in pixels
+        int32_t base_factor;                   // scaler factor (1-4)
+        int32_t width;                         // source page size
+        int32_t height;
+        int32_t cursor_x; // source-space cursor rectangle to keep, or -1
+        int32_t cursor_y;
+        int32_t cursor_size;
+    };
+
+    // Writes the 4x composited frame (width*4 x height*4 ARGB8888) to `output`.
+    // Returns the number of source pixels replaced with HD art.
+    int32_t Compose(const s_compose_input* input, uint32_t* output);
+
+} // namespace hd_sprites

@@ -103,11 +103,13 @@ namespace clipped {
 
                     // Draw visible run
                     uint8_t* screen_ptr = (uint8_t*)(video::current_video_page + run_start_abs);
+                    uint8_t* stamp_start = screen_ptr;
                     while (run_start_abs < run_clipped_end) {
                         *screen_ptr++ = sprite[pixel_ptr++];
                         run_start_abs++;
                         cursor_abs++;
                     }
+                    hd_sprites::Stamp_Run(stamp_start, (int32_t)(screen_ptr - stamp_start));
                 }
                 sprite_word_idx += (count + 1) / 2;
             }

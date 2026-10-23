@@ -894,6 +894,66 @@ namespace platform {
             (void)SDL_SetPaletteColors(g_sdl_present_palette, colors, 0, 256);
         }
 
+        // HD sprite composition: a 4x frame built from the scaler output plus HD sprite art.
+        SDL_Texture* g_hd_texture;
+        uint32_t* g_hd_pixels;
+
+        bool Present_HD_Frame() {
+            const int32_t width = video::g_screen_res_x * HD_SPRITES_SCALE;
+            const int32_t height = video::g_screen_res_y * HD_SPRITES_SCALE;
+            if (g_hd_texture == nullptr) {
+                g_hd_texture = SDL_CreateTexture(g_sdl_renderer, SDL_PIXELFORMAT_ARGB8888,
+                    SDL_TEXTUREACCESS_STREAMING, width, height);
+                g_hd_pixels = (uint32_t*)malloc((size_t)width * (size_t)height * sizeof(uint32_t));
+                if (g_hd_texture == nullptr || g_hd_pixels == nullptr) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: unable to create the HD frame: %s", SDL_GetError());
+                    return false;
+                }
+                (void)SDL_SetTextureScaleMode(g_hd_texture, SDL_SCALEMODE_LINEAR);
+            }
+
+            hd_sprites::s_compose_input input = {};
+            input.page = g_present_surface;
+            input.palette = g_present_palette_entries;
+            input.base = scalers::Get_Output_Pixels(&g_present_scaler_pipeline);
+            input.base_stride = scalers::Get_Output_Stride(&g_present_scaler_pipeline);
+            input.base_factor = scalers::Get_Factor(g_applied_present_scaler);
+            input.width = video::g_screen_res_x;
+            input.height = video::g_screen_res_y;
+            input.cursor_x = -1;
+            const s_present_cursor_state& cursor_state = g_active_cursor_state;
+            if (cursor_state.pixels != nullptr && cursor_state.enabled != 0 && cursor_state.shape > 0) {
+                input.cursor_x = SDL_GetAtomicInt(&g_present_mouse_x);
+                input.cursor_y = SDL_GetAtomicInt(&g_present_mouse_y);
+                input.cursor_size = k_cursor_dimension;
+            }
+            if (input.base == nullptr || input.base_factor <= 0) {
+                return false;
+            }
+            const int32_t replaced = hd_sprites::Compose(&input, g_hd_pixels);
+
+            // Debug aid for headless runs: ORION2RE_HD_DUMP=<directory> saves every 50th
+            // composed frame as a BMP.
+            static uint32_t hd_frame_counter;
+            const char* dump_dir = SDL_getenv("ORION2RE_HD_DUMP");
+            if (dump_dir != nullptr && (hd_frame_counter++ % 50) == 0) {
+                SDL_Surface* dump = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_ARGB8888,
+                    g_hd_pixels, width * (int32_t)sizeof(uint32_t));
+                char path[512];
+                snprintf(path, sizeof(path), "%s/hd_%05u.bmp", dump_dir, hd_frame_counter);
+                if (dump != nullptr) {
+                    (void)SDL_SaveBMP(dump, path);
+                    SDL_DestroySurface(dump);
+                }
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd: frame %u, %d source pixels replaced", hd_frame_counter, replaced);
+            }
+            if (!SDL_UpdateTexture(g_hd_texture, nullptr, g_hd_pixels, width * (int32_t)sizeof(uint32_t))) {
+                return false;
+            }
+            Present_Texture_To_Output(g_hd_texture);
+            return true;
+        }
+
         void Present_Indexed_Buffer(const uint8_t* src_pixels) {
             if (src_pixels == nullptr || !Ensure_Present_Backend()) {
                 return;
@@ -909,6 +969,10 @@ namespace platform {
                     &g_present_scaler_pipeline,
                     g_sdl_present_pixels,
                     video::g_screen_res_x)) {
+                return;
+            }
+
+            if (hd_sprites::Enabled() && Present_HD_Frame()) {
                 return;
             }
 
