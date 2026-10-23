@@ -533,6 +533,9 @@ namespace hd_sprites {
         }
         if (font->state[code] != 1) {
             stats_glyph_missing_art++;
+            if (stats_enabled) {
+                Stats_Missing(std::string("glyph:") + font_file + "/" + std::to_string(font_index) + "/" + std::to_string(code));
+            }
             return;
         }
         stats_glyph_commands++;
