@@ -620,8 +620,15 @@ namespace hd_sprites {
             return Literal(Mix(rgb, Base_Color(dest), alpha));
         }
 
-        // Glass of level `level` with coverage `alpha` over `dest`, tinted in true colour.
+        // Glass of level `level` with coverage `alpha` over `dest`. Palette-based pixels go through
+        // the game's own glass table (exactly what the original pixel gets, so e.g. bright lights
+        // under dark glass turn dark as in the original); full-colour pixels and partial
+        // coverage are tinted in true colour.
         uint32_t Glass_Tint(uint32_t dest, int32_t level, uint32_t alpha) {
+            if (alpha >= 255 && (dest & HD_LITERAL) == 0) {
+                const uint8_t* table = video::glass_remap_colors[level & 15];
+                return (dest & 0xFFFF0000u) | ((uint32_t)table[(dest >> 8) & 0xFF] << 8) | table[dest & 0xFF];
+            }
             const auto& glass = video::glass_colors[level & 15];
             const uint32_t under = Base_Color(dest);
             uint32_t tinted = under;
