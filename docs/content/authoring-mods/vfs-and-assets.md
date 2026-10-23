@@ -86,6 +86,15 @@ The override file contains only that entry's payload, not an LBX header or table
 
 An entry override therefore wins for its one entry even when another visible layer provides a complete replacement LBX. Unchanged entries continue to come from the highest-priority complete file.
 
+## Music entries
+
+Music tracks are entries of `STREAM.LBX` and `STREAMHD.LBX`. Replace one track with an entry override such as `STREAMHD.LBX/019`. The entry payload may be:
+
+- a RIFF/WAVE file containing 8-bit unsigned or 16-bit signed PCM, with any channel count and sample rate. Metadata chunks such as `LIST` are ignored; or
+- an Ogg Vorbis file, which is decoded to 16-bit PCM during playback.
+
+Ogg Vorbis keeps long or high-quality tracks small. Each entry is read completely into memory when the track starts, up to 256 MiB, so the package archive is not held open while the track plays.
+
 ## Development overrides
 
 `data/overrides/` is useful for discovering paths and testing a replacement quickly. It is not a package:
