@@ -1324,13 +1324,17 @@ namespace hd_sprites {
         }
         if (stats_enabled && (++stats_compose_calls % 100) == 0) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "hd stats: compose owned=%d stale=%d replaced=%d (glyph %d); glyph commands %u, glyphs without art %u",
+                "hd stats: compose owned=%d stale=%d replaced=%d (glyph %d); glyph commands %u, glyphs without art %u; "
+                "allocated commands %u, remap tables %u, shade masks %u",
                 counts.owned_pixels,
                 counts.stale_pixels,
                 counts.replaced,
                 counts.replaced_glyph,
                 stats_glyph_commands,
-                stats_glyph_missing_art);
+                stats_glyph_missing_art,
+                next_command,
+                next_remap_table,
+                next_shade_mask);
         }
         return counts.replaced;
     }
