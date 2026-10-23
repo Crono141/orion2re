@@ -1176,13 +1176,44 @@ namespace hd_sprites {
                 draw = entry.draw;
                 draw.waiting = false;
                 generation = entry.generation;
+                // Screens often copy the finished page to the other page and restore from it, so
+                // the other page may hold the same plain blocks: those get the upgraded art too.
+                std::vector<s_stamp> twins;
                 for (const s_stamp& stamp : entry.stamps) {
-                    const s_surface& target = *stamp.target;
-                    if (target.mark[(size_t)stamp.offset] == entry.generation && target.shadow[(size_t)stamp.offset] == stamp.value) {
-                        pending.push_back(stamp);
+                    s_surface& target = *stamp.target;
+                    if (target.mark[(size_t)stamp.offset] != entry.generation || target.shadow[(size_t)stamp.offset] != stamp.value) {
+                        continue;
+                    }
+                    pending.push_back(stamp);
+                    s_surface* other = &target == &page_off ? &page_back : &target == &page_back ? &page_off
+                                                                                                 : nullptr;
+                    if (other != nullptr && !other->hd.empty() && other->shadow[(size_t)stamp.offset] == stamp.value) {
+                        const uint32_t* block = Block(*other, stamp.offset % other->width, stamp.offset / other->width);
+                        const size_t stride = (size_t)other->width * S;
+                        bool plain = true;
+                        for (int32_t sy = 0; sy < S && plain; ++sy) {
+                            for (int32_t sx = 0; sx < S && plain; ++sx) {
+                                plain = block[sy * stride + sx] == Indexed(stamp.value);
+                            }
+                        }
+                        if (plain) {
+                            twins.push_back({other, stamp.offset, stamp.value, stamp.level});
+                        }
                     }
                 }
                 Flush_Pending();
+                for (const s_stamp& twin : twins) {
+                    s_surface& from = twin.target == &page_off ? page_back : page_off;
+                    const int32_t x = twin.offset % from.width;
+                    const int32_t y = twin.offset / from.width;
+                    const size_t stride = (size_t)from.width * S;
+                    const uint32_t* src = Block(from, x, y);
+                    uint32_t* dst = Block(*twin.target, x, y);
+                    for (int32_t sy = 0; sy < S; ++sy) {
+                        memcpy(dst + sy * stride, src + sy * stride, S * sizeof(uint32_t));
+                    }
+                    Mark_Row(*twin.target, y);
+                }
             }
             deferred.resize(kept);
             draw = saved_draw;
