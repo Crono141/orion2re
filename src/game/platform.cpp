@@ -79,6 +79,7 @@ namespace platform {
         bool Ensure_Scaler_Output();
         void Destroy_Scaler_Output();
         void Present_Texture_To_Output(SDL_Texture* texture);
+        void Save_Pending_Screenshot();
         void Apply_Pending_Cursor_State();
         void Blit_Cursor_On_Present_Surface();
         void Sync_Mouse_State_From_SDL();
@@ -446,6 +447,7 @@ namespace platform {
             SDL_RenderClear(g_sdl_renderer);
             SDL_RenderTexture(g_sdl_renderer, texture, nullptr, nullptr);
             debug_overlay::Render_Published_Frame(g_sdl_renderer, g_present_generation);
+            Save_Pending_Screenshot();
             SDL_RenderPresent(g_sdl_renderer);
         }
 
@@ -1267,7 +1269,133 @@ namespace platform {
         return true;
     }
 
+    namespace {
+        // ORION2RE_INPUT_SCRIPT=<file>: replays timed input for automated testing. One command
+        // per line, '#' comments:
+        //   wait <ms>           pause before the next command
+        //   move <x> <y>        move the mouse (640x480 game coordinates)
+        //   click <x> <y>       move, press and release the left button
+        //   key <name>          press a key (SDL key name, e.g. Return, Escape, a)
+        //   screenshot <file>   save the next presented window as BMP
+        //   quit                request exit
+        struct s_script_step {
+            std::string command;
+            int32_t a;
+            int32_t b;
+            std::string text;
+        };
+        std::vector<s_script_step> g_script;
+        size_t g_script_position;
+        uint64_t g_script_resume_ms;
+        bool g_script_loaded;
+        std::string g_pending_screenshot;
+
+        void Load_Input_Script() {
+            g_script_loaded = true;
+            const char* path = SDL_getenv("ORION2RE_INPUT_SCRIPT");
+            if (path == nullptr) {
+                return;
+            }
+            size_t size = 0;
+            char* text = (char*)SDL_LoadFile(path, &size);
+            if (text == nullptr) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "input script: cannot read %s", path);
+                return;
+            }
+            std::string all(text, size);
+            SDL_free(text);
+            size_t start = 0;
+            while (start < all.size()) {
+                size_t end = all.find('\n', start);
+                if (end == std::string::npos) {
+                    end = all.size();
+                }
+                std::string line = all.substr(start, end - start);
+                start = end + 1;
+                const size_t hash = line.find('#');
+                if (hash != std::string::npos) {
+                    line.resize(hash);
+                }
+                char command[32] = {};
+                char argument[256] = {};
+                int a = 0;
+                int b = 0;
+                if (sscanf(line.c_str(), "%31s", command) != 1) {
+                    continue;
+                }
+                s_script_step step = {command, 0, 0, {}};
+                if (step.command == "move" || step.command == "click") {
+                    (void)sscanf(line.c_str(), "%*s %d %d", &a, &b);
+                } else if (step.command == "wait") {
+                    (void)sscanf(line.c_str(), "%*s %d", &a);
+                } else if (sscanf(line.c_str(), "%*s %255s", argument) == 1) {
+                    step.text = argument;
+                }
+                step.a = a;
+                step.b = b;
+                g_script.push_back(step);
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "input script: %zu steps from %s", g_script.size(), path);
+        }
+
+        void Run_Input_Script() {
+            if (!g_script_loaded) {
+                Load_Input_Script();
+            }
+            const uint64_t now = SDL_GetTicks();
+            while (g_script_position < g_script.size() && now >= g_script_resume_ms) {
+                const s_script_step& step = g_script[g_script_position++];
+                if (step.command == "wait") {
+                    g_script_resume_ms = now + (uint64_t)step.a;
+                } else if (step.command == "move" || step.command == "click") {
+                    Set_Present_Mouse_Position((int16_t)step.a, (int16_t)step.b);
+                    Forward_Game_Mouse_State((int16_t)step.a, (int16_t)step.b, 0, false);
+                    if (step.command == "click") {
+                        Forward_Game_Mouse_State((int16_t)step.a, (int16_t)step.b, 1, false);
+                        // Release on a later pass so the game sees the press.
+                        g_script.insert(g_script.begin() + (ptrdiff_t)g_script_position,
+                            {s_script_step{"release", step.a, step.b, {}}});
+                        g_script.insert(g_script.begin() + (ptrdiff_t)g_script_position, {s_script_step{"wait", 120, 0, {}}});
+                    }
+                } else if (step.command == "release") {
+                    Forward_Game_Mouse_State((int16_t)step.a, (int16_t)step.b, 0, false);
+                } else if (step.command == "key") {
+                    SDL_Event event = {};
+                    event.type = SDL_EVENT_KEY_DOWN;
+                    event.key.key = SDL_GetKeyFromName(step.text.c_str());
+                    event.key.scancode = SDL_GetScancodeFromKey(event.key.key, nullptr);
+                    event.key.down = true;
+                    (void)SDL_PushEvent(&event);
+                    event.type = SDL_EVENT_KEY_UP;
+                    event.key.down = false;
+                    (void)SDL_PushEvent(&event);
+                } else if (step.command == "screenshot") {
+                    g_pending_screenshot = step.text;
+                    Request_Present_Refresh();
+                } else if (step.command == "quit") {
+                    Request_SDL_Exit();
+                } else {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "input script: unknown command '%s'", step.command.c_str());
+                }
+            }
+        }
+
+        void Save_Pending_Screenshot() {
+            if (g_pending_screenshot.empty() || g_sdl_renderer == nullptr) {
+                return;
+            }
+            SDL_Surface* shot = SDL_RenderReadPixels(g_sdl_renderer, nullptr);
+            if (shot != nullptr) {
+                (void)SDL_SaveBMP(shot, g_pending_screenshot.c_str());
+                SDL_DestroySurface(shot);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "input script: screenshot %s", g_pending_screenshot.c_str());
+            }
+            g_pending_screenshot.clear();
+        }
+    } // namespace
+
     void __cdecl Service_Pending_Window_Events() {
+        Run_Input_Script();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT ||
