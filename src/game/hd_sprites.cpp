@@ -98,6 +98,14 @@ namespace hd_sprites {
             uint8_t b;
         };
         s_glass glass_published[16];
+        // Presenter-owned copies, taken while the game thread cannot publish (Snapshot_Plane),
+        // so the owners always belong to the same frame as the presented page.
+        uint32_t* plane_present;
+        uint32_t* under_present;
+        s_glass glass_present[16];
+        // Areas whose owners changed since the last Take_Owner_Changes, and whether everything did.
+        std::vector<s_rect> owner_changes;
+        bool owner_changes_full = true;
         int32_t plane_width;
         int32_t plane_height;
 
@@ -906,8 +914,10 @@ namespace hd_sprites {
         under_off = (uint32_t*)calloc(count, sizeof(uint32_t));
         under_back = (uint32_t*)calloc(count, sizeof(uint32_t));
         under_published = (uint32_t*)calloc(count, sizeof(uint32_t));
+        plane_present = (uint32_t*)calloc(count, sizeof(uint32_t));
+        under_present = (uint32_t*)calloc(count, sizeof(uint32_t));
         if (plane_off == nullptr || plane_back == nullptr || plane_published == nullptr || under_off == nullptr ||
-            under_back == nullptr || under_published == nullptr) {
+            under_back == nullptr || under_published == nullptr || plane_present == nullptr || under_present == nullptr) {
             Free_Planes();
             enabled = false;
             return;
@@ -923,8 +933,12 @@ namespace hd_sprites {
         free(under_off);
         free(under_back);
         free(under_published);
-        plane_off = plane_back = plane_published = nullptr;
-        under_off = under_back = under_published = nullptr;
+        free(plane_present);
+        free(under_present);
+        plane_off = plane_back = plane_published = plane_present = nullptr;
+        under_off = under_back = under_published = under_present = nullptr;
+        owner_changes.clear();
+        owner_changes_full = true;
         plane_width = plane_height = 0;
     }
 
@@ -952,6 +966,62 @@ namespace hd_sprites {
         }
     }
 
+    void Snapshot_Plane() {
+        if (plane_published == nullptr || plane_present == nullptr) {
+            return;
+        }
+        if (memcmp(glass_present, glass_published, sizeof(glass_present)) != 0) {
+            memcpy(glass_present, glass_published, sizeof(glass_present));
+            owner_changes_full = true;
+        }
+        // Rows whose owners changed are merged into bands of consecutive rows.
+        s_rect band = {};
+        bool open = false;
+        for (int32_t y = 0; y < plane_height; ++y) {
+            const size_t row = (size_t)y * plane_width;
+            int32_t x0 = plane_width;
+            int32_t x1 = -1;
+            if (!owner_changes_full) {
+                for (int32_t x = 0; x < plane_width; ++x) {
+                    if (plane_present[row + x] != plane_published[row + x] ||
+                        under_present[row + x] != under_published[row + x]) {
+                        x0 = SDL_min(x0, x);
+                        x1 = x;
+                    }
+                }
+            }
+            if (x1 >= 0) {
+                if (open) {
+                    const int32_t left = SDL_min(band.x, x0);
+                    const int32_t right = SDL_max(band.x + band.width, x1 + 1);
+                    band.x = left;
+                    band.width = right - left;
+                    band.height = y - band.y + 1;
+                } else {
+                    band = {x0, y, x1 - x0 + 1, 1};
+                    open = true;
+                }
+            } else if (open) {
+                owner_changes.push_back(band);
+                open = false;
+            }
+        }
+        if (open) {
+            owner_changes.push_back(band);
+        }
+        const size_t bytes = (size_t)plane_width * plane_height * sizeof(uint32_t);
+        memcpy(plane_present, plane_published, bytes);
+        memcpy(under_present, under_published, bytes);
+    }
+
+    bool Take_Owner_Changes(std::vector<s_rect>* rects) {
+        const bool full = owner_changes_full;
+        rects->insert(rects->end(), owner_changes.begin(), owner_changes.end());
+        owner_changes.clear();
+        owner_changes_full = false;
+        return full;
+    }
+
     namespace {
 
         uint32_t Blend(uint32_t over, uint32_t under, uint32_t alpha) {
@@ -963,7 +1033,7 @@ namespace hd_sprites {
         }
 
         uint32_t Apply_Glass(uint32_t rgb, int32_t level) {
-            const s_glass& glass = glass_published[level & 15];
+            const s_glass& glass = glass_present[level & 15];
             if (glass.intensity == 0) {
                 return rgb;
             }
@@ -1045,7 +1115,7 @@ namespace hd_sprites {
                 }
             }
 
-            if (!enabled || plane_published == nullptr || plane_width != in->width || plane_height != in->height) {
+            if (!enabled || plane_present == nullptr || plane_width != in->width || plane_height != in->height) {
                 return;
             }
 
@@ -1056,7 +1126,7 @@ namespace hd_sprites {
             for (int32_t y = y0; y < y1; ++y) {
                 for (int32_t x = x0; x < x1; ++x) {
                     const size_t i = (size_t)y * in->width + x;
-                    const uint32_t owner = plane_published[i];
+                    const uint32_t owner = plane_present[i];
                     if (owner != 0) {
                         owned_pixels++;
                     }
@@ -1115,7 +1185,7 @@ namespace hd_sprites {
                             } else if ((asset->glassed || command.glassed) && index >= HD_GLASS_FIRST) {
                                 // Translucent pixel: tint the HD art that was underneath.
                                 const uint32_t tinted = Apply_Glass(
-                                    Under_Color(under_published[i], x, y, sx, sy, palette), index - HD_GLASS_FIRST);
+                                    Under_Color(under_present[i], x, y, sx, sy, palette), index - HD_GLASS_FIRST);
                                 out[sx] = alpha == 255 ? tinted : Blend(tinted, out[sx], alpha);
                                 continue;
                             } else if (command.remap != 0) {
