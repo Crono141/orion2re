@@ -874,135 +874,162 @@ namespace hd_sprites {
 
     } // namespace
 
+    namespace {
+
+        struct s_compose_counts {
+            int32_t replaced;
+            int32_t replaced_glyph;
+            int32_t owned_pixels;
+            int32_t stale_pixels;
+        };
+
+        void Compose_Rect(const s_compose_input* in, uint32_t* output, const uint32_t* palette, int32_t x0, int32_t y0, int32_t x1, int32_t y1, s_compose_counts* counts) {
+            const int32_t s = HD_SPRITES_SCALE;
+            const int32_t out_width = in->width * s;
+
+            // Base image: the regular scaler output resampled to 4x.
+            for (int32_t oy = y0 * s; oy < y1 * s; ++oy) {
+                const uint32_t* base_row = in->base + (size_t)(oy * in->base_factor / s) * in->base_stride;
+                uint32_t* out_row = output + (size_t)oy * out_width;
+                if (in->base_factor == s) {
+                    memcpy(out_row + x0 * s, base_row + x0 * s, (size_t)(x1 - x0) * s * sizeof(uint32_t));
+                    continue;
+                }
+                for (int32_t ox = x0 * s; ox < x1 * s; ++ox) {
+                    out_row[ox] = base_row[ox * in->base_factor / s];
+                }
+            }
+
+            if (!enabled || plane_published == nullptr || plane_width != in->width || plane_height != in->height) {
+                return;
+            }
+
+            int32_t& replaced = counts->replaced;
+            int32_t& replaced_glyph = counts->replaced_glyph;
+            int32_t& owned_pixels = counts->owned_pixels;
+            int32_t& stale_pixels = counts->stale_pixels;
+            for (int32_t y = y0; y < y1; ++y) {
+                for (int32_t x = x0; x < x1; ++x) {
+                    const size_t i = (size_t)y * in->width + x;
+                    const uint32_t owner = plane_published[i];
+                    if (owner != 0) {
+                        owned_pixels++;
+                    }
+                    if (owner == 0 || (owner & 0xFF) != in->page[i]) {
+                        if (owner != 0) {
+                            stale_pixels++;
+                            if (debug_stale) {
+                                // ORION2RE_HD_DEBUG=stale: tint pixels whose owner record went stale.
+                                for (int32_t sy = 0; sy < s; ++sy) {
+                                    uint32_t* out = output + (size_t)(y * s + sy) * out_width + (size_t)x * s;
+                                    for (int32_t sx = 0; sx < s; ++sx) {
+                                        out[sx] = (out[sx] & 0xFF7F7F7Fu) | 0x00800000u;
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    if (in->cursor_x >= 0 && x >= in->cursor_x && x < in->cursor_x + in->cursor_size &&
+                        y >= in->cursor_y && y < in->cursor_y + in->cursor_size) {
+                        continue;
+                    }
+                    const s_command command = commands[owner >> 8];
+                    const bool glyph = command.kind == COMMAND_GLYPH;
+                    const s_hd_asset* asset = nullptr;
+                    const s_hd_frame* frame = nullptr;
+                    if (glyph) {
+                        frame = Glyph_Frame(command.asset, command.frame);
+                    } else if (command.asset >= 0 && command.asset < asset_count) {
+                        asset = assets[command.asset];
+                        frame = Resolve_Frame(asset, command.frame);
+                    }
+                    if (frame == nullptr) {
+                        continue;
+                    }
+                    const int32_t local_x = (x - command.x - frame->origin_x) * s;
+                    const int32_t local_y = (y - command.y - frame->origin_y) * s;
+                    if (local_x < 0 || local_y < 0 || local_x + s > frame->width || local_y + s > frame->height) {
+                        continue;
+                    }
+                    for (int32_t sy = 0; sy < s; ++sy) {
+                        const size_t src_row = (size_t)(local_y + sy) * frame->width + local_x;
+                        uint32_t* out = output + (size_t)(y * s + sy) * out_width + (size_t)x * s;
+                        for (int32_t sx = 0; sx < s; ++sx) {
+                            const uint8_t alpha = frame->alpha[src_row + sx];
+                            uint8_t index = frame->index[src_row + sx];
+                            if (alpha == 0) {
+                                continue;
+                            }
+                            if (glyph) {
+                                // Glyph art stores colour roles; the recorded style supplies indices.
+                                if (index < 1 || index > 8) {
+                                    continue;
+                                }
+                                index = command.colors[index - 1];
+                            } else if ((asset->glassed || command.glassed) && index >= HD_GLASS_FIRST) {
+                                // Translucent pixel: tint the HD art that was underneath.
+                                const uint32_t tinted = Apply_Glass(
+                                    Under_Color(under_published[i], x, y, sx, sy, palette), index - HD_GLASS_FIRST);
+                                out[sx] = alpha == 255 ? tinted : Blend(tinted, out[sx], alpha);
+                                continue;
+                            } else if (command.remap != 0) {
+                                index = remap_tables[command.remap][index];
+                            }
+                            const uint32_t color = palette[index];
+                            if (alpha == 255) {
+                                out[sx] = color;
+                                continue;
+                            }
+                            const uint32_t under = out[sx];
+                            const uint32_t inv = 255u - alpha;
+                            const uint32_t r = (((color >> 16) & 0xFF) * alpha + ((under >> 16) & 0xFF) * inv) / 255u;
+                            const uint32_t g = (((color >> 8) & 0xFF) * alpha + ((under >> 8) & 0xFF) * inv) / 255u;
+                            const uint32_t b = ((color & 0xFF) * alpha + (under & 0xFF) * inv) / 255u;
+                            out[sx] = 0xFF000000u | (r << 16) | (g << 8) | b;
+                        }
+                    }
+                    ++replaced;
+                    if (glyph) {
+                        ++replaced_glyph;
+                    }
+                }
+            }
+        }
+
+    } // namespace
+
     int32_t Compose(const s_compose_input* in, uint32_t* output) {
-        const int32_t s = HD_SPRITES_SCALE;
-        const int32_t out_width = in->width * s;
-        const int32_t out_height = in->height * s;
-
-        // Base image: the regular scaler output resampled to 4x.
-        for (int32_t oy = 0; oy < out_height; ++oy) {
-            const uint32_t* base_row = in->base + (size_t)(oy * in->base_factor / s) * in->base_stride;
-            uint32_t* out_row = output + (size_t)oy * out_width;
-            if (in->base_factor == s) {
-                memcpy(out_row, base_row, (size_t)out_width * sizeof(uint32_t));
-                continue;
-            }
-            for (int32_t ox = 0; ox < out_width; ++ox) {
-                out_row[ox] = base_row[ox * in->base_factor / s];
-            }
-        }
-
-        if (!enabled || plane_published == nullptr || plane_width != in->width || plane_height != in->height) {
-            return 0;
-        }
-
         uint32_t palette[256];
         for (int32_t i = 0; i < 256; ++i) {
             palette[i] = 0xFF000000u | ((uint32_t)in->palette[i].r << 16) | ((uint32_t)in->palette[i].g << 8) | in->palette[i].b;
         }
-
-        int32_t replaced = 0;
-        int32_t replaced_glyph = 0;
-        int32_t owned_pixels = 0;
-        int32_t stale_pixels = 0;
-        for (int32_t y = 0; y < in->height; ++y) {
-            for (int32_t x = 0; x < in->width; ++x) {
-                const size_t i = (size_t)y * in->width + x;
-                const uint32_t owner = plane_published[i];
-                if (owner != 0) {
-                    owned_pixels++;
-                }
-                if (owner == 0 || (owner & 0xFF) != in->page[i]) {
-                    if (owner != 0) {
-                        stale_pixels++;
-                        if (debug_stale) {
-                            // ORION2RE_HD_DEBUG=stale: tint pixels whose owner record went stale.
-                            for (int32_t sy = 0; sy < s; ++sy) {
-                                uint32_t* out = output + (size_t)(y * s + sy) * out_width + (size_t)x * s;
-                                for (int32_t sx = 0; sx < s; ++sx) {
-                                    out[sx] = (out[sx] & 0xFF7F7F7Fu) | 0x00800000u;
-                                }
-                            }
-                        }
-                    }
-                    continue;
-                }
-                if (in->cursor_x >= 0 && x >= in->cursor_x && x < in->cursor_x + in->cursor_size &&
-                    y >= in->cursor_y && y < in->cursor_y + in->cursor_size) {
-                    continue;
-                }
-                const s_command command = commands[owner >> 8];
-                const bool glyph = command.kind == COMMAND_GLYPH;
-                const s_hd_asset* asset = nullptr;
-                const s_hd_frame* frame = nullptr;
-                if (glyph) {
-                    frame = Glyph_Frame(command.asset, command.frame);
-                } else if (command.asset >= 0 && command.asset < asset_count) {
-                    asset = assets[command.asset];
-                    frame = Resolve_Frame(asset, command.frame);
-                }
-                if (frame == nullptr) {
-                    continue;
-                }
-                const int32_t local_x = (x - command.x - frame->origin_x) * s;
-                const int32_t local_y = (y - command.y - frame->origin_y) * s;
-                if (local_x < 0 || local_y < 0 || local_x + s > frame->width || local_y + s > frame->height) {
-                    continue;
-                }
-                for (int32_t sy = 0; sy < s; ++sy) {
-                    const size_t src_row = (size_t)(local_y + sy) * frame->width + local_x;
-                    uint32_t* out = output + (size_t)(y * s + sy) * out_width + (size_t)x * s;
-                    for (int32_t sx = 0; sx < s; ++sx) {
-                        const uint8_t alpha = frame->alpha[src_row + sx];
-                        uint8_t index = frame->index[src_row + sx];
-                        if (alpha == 0) {
-                            continue;
-                        }
-                        if (glyph) {
-                            // Glyph art stores colour roles; the recorded style supplies indices.
-                            if (index < 1 || index > 8) {
-                                continue;
-                            }
-                            index = command.colors[index - 1];
-                        } else if ((asset->glassed || command.glassed) && index >= HD_GLASS_FIRST) {
-                            // Translucent pixel: tint the HD art that was underneath.
-                            const uint32_t tinted = Apply_Glass(
-                                Under_Color(under_published[i], x, y, sx, sy, palette), index - HD_GLASS_FIRST);
-                            out[sx] = alpha == 255 ? tinted : Blend(tinted, out[sx], alpha);
-                            continue;
-                        } else if (command.remap != 0) {
-                            index = remap_tables[command.remap][index];
-                        }
-                        const uint32_t color = palette[index];
-                        if (alpha == 255) {
-                            out[sx] = color;
-                            continue;
-                        }
-                        const uint32_t under = out[sx];
-                        const uint32_t inv = 255u - alpha;
-                        const uint32_t r = (((color >> 16) & 0xFF) * alpha + ((under >> 16) & 0xFF) * inv) / 255u;
-                        const uint32_t g = (((color >> 8) & 0xFF) * alpha + ((under >> 8) & 0xFF) * inv) / 255u;
-                        const uint32_t b = ((color & 0xFF) * alpha + (under & 0xFF) * inv) / 255u;
-                        out[sx] = 0xFF000000u | (r << 16) | (g << 8) | b;
-                    }
-                }
-                ++replaced;
-                if (glyph) {
-                    ++replaced_glyph;
+        s_compose_counts counts = {};
+        if (in->rects == nullptr) {
+            Compose_Rect(in, output, palette, 0, 0, in->width, in->height, &counts);
+        } else {
+            for (int32_t r = 0; r < in->rect_count; ++r) {
+                const s_rect& rect = in->rects[r];
+                const int32_t x0 = SDL_max(rect.x, 0);
+                const int32_t y0 = SDL_max(rect.y, 0);
+                const int32_t x1 = SDL_min(rect.x + rect.width, in->width);
+                const int32_t y1 = SDL_min(rect.y + rect.height, in->height);
+                if (x0 < x1 && y0 < y1) {
+                    Compose_Rect(in, output, palette, x0, y0, x1, y1, &counts);
                 }
             }
         }
         if (stats_enabled && (++stats_compose_calls % 100) == 0) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "hd stats: compose owned=%d stale=%d replaced=%d (glyph %d); glyph commands %u, glyphs without art %u",
-                owned_pixels,
-                stale_pixels,
-                replaced,
-                replaced_glyph,
+                counts.owned_pixels,
+                counts.stale_pixels,
+                counts.replaced,
+                counts.replaced_glyph,
                 stats_glyph_commands,
                 stats_glyph_missing_art);
         }
-        return replaced;
+        return counts.replaced;
     }
 
 } // namespace hd_sprites
