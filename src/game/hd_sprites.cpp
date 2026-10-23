@@ -14,6 +14,7 @@ namespace hd_sprites {
 #define HD_COMMAND_COUNT (1u << HD_COMMAND_BITS)
 #define HD_MAX_ASSETS 16384
 #define HD_GLASS_FIRST 0xF0
+#define HD_MAX_GLYPH_FONTS 64
 
     namespace {
 
@@ -49,11 +50,27 @@ namespace hd_sprites {
             int32_t size;
         };
 
+        enum e_command_kind : uint8_t {
+            COMMAND_SPRITE = 0,
+            COMMAND_GLYPH = 1,
+        };
+
         struct s_command {
-            int32_t asset;
-            int16_t frame;
+            int32_t asset; // sprite asset, or glyph font slot
+            int16_t frame; // sprite frame, or character code
             int16_t x;
             int16_t y;
+            e_command_kind kind;
+            uint8_t colors[8]; // glyph role -> palette index
+        };
+
+        // HD glyphs for one font size of one font file: hd/<FILE>/<font>/<code>.png, LA with
+        // L = colour role (1..8) and A = coverage, at HD_SPRITES_SCALE x the glyph cell.
+        struct s_hd_glyph_font {
+            std::string directory;
+            bool present;
+            uint8_t state[256]; // 0 = not tried, 1 = loaded, 2 = missing
+            s_hd_frame glyphs[256];
         };
 
         bool initialized;
@@ -77,6 +94,10 @@ namespace hd_sprites {
         int32_t asset_count;
         std::unordered_map<std::string, int32_t> asset_by_key;
         std::unordered_map<const void*, s_registration> registrations;
+
+        s_hd_glyph_font* glyph_fonts[HD_MAX_GLYPH_FONTS];
+        int32_t glyph_font_count;
+        std::unordered_map<std::string, int32_t> glyph_font_by_key;
 
         uint32_t* Owner_Plane_For(const uint8_t* page) {
             if (page == nullptr) {
@@ -121,6 +142,10 @@ namespace hd_sprites {
             SDL_DestroySurface(loaded);
             if (rgba == nullptr) {
                 return false;
+            }
+            if (frame->width == 0 && frame->height == 0) {
+                frame->width = rgba->w;
+                frame->height = rgba->h;
             }
             if (rgba->w != frame->width || rgba->h != frame->height) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: %s is %dx%d, sprite.json says %dx%d", path.c_str(), rgba->w, rgba->h, frame->width, frame->height);
@@ -257,6 +282,40 @@ namespace hd_sprites {
             return asset_index;
         }
 
+        int32_t Find_Glyph_Font(const char* font_file, int16_t font_index) {
+            char key[96];
+            snprintf(key, sizeof(key), "%s/%d", font_file, (int)font_index);
+            for (char* c = key; *c != '\0'; ++c) {
+                if (*c >= 'a' && *c <= 'z') {
+                    *c = (char)(*c - 'a' + 'A');
+                }
+            }
+            const auto found = glyph_font_by_key.find(key);
+            if (found != glyph_font_by_key.end()) {
+                return found->second;
+            }
+            int32_t slot = -1;
+            std::string file_key(key, strchr(key, '/') - key);
+            if (glyph_font_count < HD_MAX_GLYPH_FONTS &&
+                vfs::File_Exists(("hd/" + file_key + "/font.json").c_str()) != 0) {
+                s_hd_glyph_font* font = new s_hd_glyph_font();
+                font->directory = std::string("hd/") + key;
+                font->present = true;
+                glyph_fonts[glyph_font_count] = font;
+                slot = glyph_font_count++;
+            }
+            glyph_font_by_key.emplace(key, slot);
+            return slot;
+        }
+
+        const s_hd_frame* Glyph_Frame(int32_t slot, int32_t code) {
+            if (slot < 0 || slot >= glyph_font_count || code < 0 || code > 255) {
+                return nullptr;
+            }
+            const s_hd_glyph_font* font = glyph_fonts[slot];
+            return font->state[code] == 1 ? &font->glyphs[code] : nullptr;
+        }
+
     } // namespace
 
     void Initialize() {
@@ -321,7 +380,38 @@ namespace hd_sprites {
         if (id == 0) {
             id = next_command++ & (HD_COMMAND_COUNT - 1);
         }
-        commands[id] = {found->second.asset, anim->current_frame, x, y};
+        commands[id] = {found->second.asset, anim->current_frame, x, y, COMMAND_SPRITE, {}};
+        current_command = id;
+    }
+
+    void Begin_Glyph(const char* font_file, int16_t font_index, uint8_t code, int16_t x, int16_t y, const uint8_t* colors) {
+        current_command = 0;
+        if (!initialized) {
+            Initialize();
+        }
+        if (!enabled || font_file == nullptr || colors == nullptr) {
+            return;
+        }
+        const int32_t slot = Find_Glyph_Font(font_file, font_index);
+        if (slot < 0) {
+            return;
+        }
+        s_hd_glyph_font* font = glyph_fonts[slot];
+        if (font->state[code] == 0) {
+            char name[16];
+            snprintf(name, sizeof(name), "/%03d.png", (int)code);
+            font->state[code] = Load_Frame_Png(font->directory + name, &font->glyphs[code]) ? 1 : 2;
+        }
+        if (font->state[code] != 1) {
+            return;
+        }
+        uint32_t id = next_command++ & (HD_COMMAND_COUNT - 1);
+        if (id == 0) {
+            id = next_command++ & (HD_COMMAND_COUNT - 1);
+        }
+        s_command command = {slot, (int16_t)code, x, y, COMMAND_GLYPH, {}};
+        memcpy(command.colors, colors, sizeof(command.colors));
+        commands[id] = command;
         current_command = id;
     }
 
@@ -434,11 +524,15 @@ namespace hd_sprites {
                     continue;
                 }
                 const s_command command = commands[owner >> 8];
-                if (command.asset < 0 || command.asset >= asset_count) {
-                    continue;
+                const bool glyph = command.kind == COMMAND_GLYPH;
+                const s_hd_asset* asset = nullptr;
+                const s_hd_frame* frame = nullptr;
+                if (glyph) {
+                    frame = Glyph_Frame(command.asset, command.frame);
+                } else if (command.asset >= 0 && command.asset < asset_count) {
+                    asset = assets[command.asset];
+                    frame = Resolve_Frame(asset, command.frame);
                 }
-                const s_hd_asset* asset = assets[command.asset];
-                const s_hd_frame* frame = Resolve_Frame(asset, command.frame);
                 if (frame == nullptr) {
                     continue;
                 }
@@ -452,8 +546,17 @@ namespace hd_sprites {
                     uint32_t* out = output + (size_t)(y * s + sy) * out_width + (size_t)x * s;
                     for (int32_t sx = 0; sx < s; ++sx) {
                         const uint8_t alpha = frame->alpha[src_row + sx];
-                        const uint8_t index = frame->index[src_row + sx];
-                        if (alpha == 0 || (asset->glassed && index >= HD_GLASS_FIRST)) {
+                        uint8_t index = frame->index[src_row + sx];
+                        if (alpha == 0) {
+                            continue;
+                        }
+                        if (glyph) {
+                            // Glyph art stores colour roles; the recorded style supplies indices.
+                            if (index < 1 || index > 8) {
+                                continue;
+                            }
+                            index = command.colors[index - 1];
+                        } else if (asset->glassed && index >= HD_GLASS_FIRST) {
                             continue;
                         }
                         const uint32_t color = palette[index];
