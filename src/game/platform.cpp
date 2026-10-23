@@ -930,7 +930,15 @@ namespace platform {
             if (input.base == nullptr || input.base_factor <= 0) {
                 return false;
             }
+            const uint64_t compose_start = SDL_GetPerformanceCounter();
             const int32_t replaced = hd_sprites::Compose(&input, g_hd_pixels);
+            static double compose_ms_total;
+            static uint32_t compose_count;
+            compose_ms_total += (double)(SDL_GetPerformanceCounter() - compose_start) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+            if (++compose_count % 200 == 0 && SDL_getenv("ORION2RE_HD_STATS") != nullptr) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: compose %.2f ms average over %u frames",
+                    compose_ms_total / compose_count, compose_count);
+            }
 
             // Debug aid for headless runs: ORION2RE_HD_DUMP=<directory> saves every 50th
             // composed frame as a BMP.
