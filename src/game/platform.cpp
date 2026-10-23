@@ -898,7 +898,7 @@ namespace platform {
             (void)SDL_SetPaletteColors(g_sdl_present_palette, colors, 0, 256);
         }
 
-        // HD sprite composition: a 4x frame built from the scaler output plus HD sprite art.
+        // HD presentation: the 4x HD surface of the presented page, coloured with its palette.
         SDL_Texture* g_hd_texture;
         uint32_t* g_hd_pixels;
         // False until the HD texture holds a complete frame (first frame, failed upload, window
@@ -911,7 +911,7 @@ namespace platform {
             if (g_hd_texture == nullptr) {
                 g_hd_texture = SDL_CreateTexture(g_sdl_renderer, SDL_PIXELFORMAT_ARGB8888,
                     SDL_TEXTUREACCESS_STREAMING, width, height);
-                g_hd_pixels = (uint32_t*)malloc((size_t)width * (size_t)height * sizeof(uint32_t));
+                g_hd_pixels = (uint32_t*)calloc((size_t)width * (size_t)height, sizeof(uint32_t));
                 if (g_hd_texture == nullptr || g_hd_pixels == nullptr) {
                     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: unable to create the HD frame: %s", SDL_GetError());
                     return false;
@@ -919,53 +919,22 @@ namespace platform {
                 (void)SDL_SetTextureScaleMode(g_hd_texture, SDL_SCALEMODE_LINEAR);
             }
 
-            hd_sprites::s_compose_input input = {};
-            input.page = g_present_surface;
-            input.palette = g_present_palette_entries;
-            input.base = scalers::Get_Output_Pixels(&g_present_scaler_pipeline);
-            input.base_stride = scalers::Get_Output_Stride(&g_present_scaler_pipeline);
-            input.base_factor = scalers::Get_Factor(g_applied_present_scaler);
-            input.width = video::g_screen_res_x;
-            input.height = video::g_screen_res_y;
-            input.cursor_x = -1; // the cursor is rendered as an overlay, not part of the base image
-            if (input.base == nullptr || input.base_factor <= 0) {
-                return false;
-            }
-
-            // Recompose only what the scaler reports as changed (it compares final colours, so
-            // palette fades and cycling count); everything on the first frame.
-            static std::vector<hd_sprites::s_rect> rects;
-            rects.clear();
-            const int32_t region_count = scalers::Get_Dirty_Region_Count(&g_present_scaler_pipeline);
-            const scalers::s_region* regions = scalers::Get_Dirty_Regions(&g_present_scaler_pipeline);
-            const int32_t factor = input.base_factor;
-            for (int32_t r = 0; r < region_count; ++r) {
-                const scalers::s_region& region = regions[r];
-                const int32_t x0 = region.x / factor;
-                const int32_t y0 = region.y / factor;
-                const int32_t x1 = (region.x + region.width + factor - 1) / factor;
-                const int32_t y1 = (region.y + region.height + factor - 1) / factor;
-                rects.push_back({x0, y0, x1 - x0, y1 - y0});
-            }
-            // Owners can change where colours did not (one portrait replacing another).
-            const bool owners_full = hd_sprites::Take_Owner_Changes(&rects);
-            const bool full = !g_hd_frame_valid || owners_full;
-            input.rects = full ? nullptr : rects.data();
-            input.rect_count = full ? 0 : (int32_t)rects.size();
-            g_hd_frame_valid = true;
-
-            const uint64_t compose_start = SDL_GetPerformanceCounter();
-            const int32_t replaced = hd_sprites::Compose(&input, g_hd_pixels);
-            static double compose_ms_total;
-            static uint32_t compose_count;
-            compose_ms_total += (double)(SDL_GetPerformanceCounter() - compose_start) * 1000.0 / (double)SDL_GetPerformanceFrequency();
-            if (++compose_count % 200 == 0 && SDL_getenv("ORION2RE_HD_STATS") != nullptr) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: compose %.2f ms average over %u frames",
-                    compose_ms_total / compose_count, compose_count);
+            // The HD surface rows that changed since the last present, in the presented palette
+            // (everything when the palette changed).
+            const uint64_t resolve_start = SDL_GetPerformanceCounter();
+            int32_t row_first = 0;
+            int32_t row_last = 0;
+            const bool changed = hd_sprites::Resolve(g_present_palette_entries, g_hd_pixels, &row_first, &row_last);
+            static double resolve_ms_total;
+            static uint32_t resolve_count;
+            resolve_ms_total += (double)(SDL_GetPerformanceCounter() - resolve_start) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+            if (++resolve_count % 200 == 0 && SDL_getenv("ORION2RE_HD_STATS") != nullptr) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: resolve %.2f ms average over %u frames",
+                    resolve_ms_total / resolve_count, resolve_count);
             }
 
             // Debug aid for headless runs: ORION2RE_HD_DUMP=<directory> saves every 50th
-            // composed frame as a BMP.
+            // presented HD frame as a BMP.
             static uint32_t hd_frame_counter;
             const char* dump_dir = SDL_getenv("ORION2RE_HD_DUMP");
             if (dump_dir != nullptr && (hd_frame_counter++ % 50) == 0) {
@@ -977,24 +946,20 @@ namespace platform {
                     (void)SDL_SaveBMP(dump, path);
                     SDL_DestroySurface(dump);
                 }
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd: frame %u, %d source pixels replaced", hd_frame_counter, replaced);
             }
             bool uploaded = true;
-            if (full) {
+            if (!g_hd_frame_valid) {
                 uploaded = SDL_UpdateTexture(g_hd_texture, nullptr, g_hd_pixels, width * (int32_t)sizeof(uint32_t));
-            } else {
-                const int32_t s = HD_SPRITES_SCALE;
-                for (const hd_sprites::s_rect& rect : rects) {
-                    const SDL_Rect area = {rect.x * s, rect.y * s, rect.width * s, rect.height * s};
-                    uploaded = uploaded &&
-                        SDL_UpdateTexture(g_hd_texture, &area, g_hd_pixels + (size_t)area.y * width + area.x,
-                            width * (int32_t)sizeof(uint32_t));
-                }
+            } else if (changed) {
+                const SDL_Rect area = {0, row_first, width, row_last - row_first};
+                uploaded = SDL_UpdateTexture(g_hd_texture, &area, g_hd_pixels + (size_t)row_first * width,
+                    width * (int32_t)sizeof(uint32_t));
             }
             if (!uploaded) {
                 g_hd_frame_valid = false;
                 return false;
             }
+            g_hd_frame_valid = true;
             Present_Texture_To_Output(g_hd_texture, true);
             return true;
         }

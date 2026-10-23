@@ -368,7 +368,7 @@ namespace clipped {
                             if (pixel >= 0xF0) {
                                 const uint8_t background = *current_screen_row;
                                 *current_screen_row = video::glass_remap_colors[pixel - 0xF0][background];
-                                hd_sprites::Stamp_Glass(current_screen_row, background);
+                                hd_sprites::Stamp_Glass(current_screen_row, background, pixel - 0xF0);
                             } else {
                                 *current_screen_row = pixel;
                                 hd_sprites::Stamp_Run(current_screen_row, 1);
@@ -463,7 +463,7 @@ namespace clipped {
                                 if (pixel >= 0xF0) {
                                     const uint8_t background = *dst;
                                     *dst = video::glass_remap_colors[pixel - 0xF0][background];
-                                    hd_sprites::Stamp_Glass(dst, background);
+                                    hd_sprites::Stamp_Glass(dst, background, pixel - 0xF0);
                                 } else {
                                     *dst = pixel;
                                     hd_sprites::Stamp_Run(dst, 1);
