@@ -17,6 +17,7 @@ namespace hd_sprites {
 #define HD_GLASS_FIRST 0xF0
 #define HD_MAX_GLYPH_FONTS 64
 #define HD_REMAP_TABLES 4096
+#define HD_SHADE_MASKS 1024
 
     namespace {
 
@@ -69,6 +70,7 @@ namespace hd_sprites {
             uint8_t glassed;   // sprite was drawn with the glass flag (it can be set at runtime)
             uint16_t remap;    // remap table, 0 = none
             uint8_t colors[8]; // glyph role -> palette index
+            uint16_t shade;    // shade mask, 0 = none
         };
 
         // HD glyphs for one font size of one font file: hd/<FILE>/<font>/<code>.png, LA with
@@ -231,6 +233,18 @@ namespace hd_sprites {
         // Snapshots of remap tables used by Remap_Draw, in a ring (slot 0 unused).
         uint8_t remap_tables[HD_REMAP_TABLES][256];
         uint32_t next_remap_table = 1;
+
+        // Per-pixel brightness (percent) of masked draws (shaded planets), in a ring (slot 0
+        // unused) interned by content.
+        struct s_shade_mask {
+            int32_t width;
+            int32_t height;
+            std::vector<uint8_t> brightness;
+        };
+        s_shade_mask shade_masks[HD_SHADE_MASKS];
+        std::string shade_mask_keys[HD_SHADE_MASKS];
+        std::unordered_map<std::string, uint32_t> shade_mask_ids;
+        uint32_t next_shade_mask = 1;
 
         uint32_t* Under_Plane_For(const uint8_t* page) {
             if (page == nullptr) {
@@ -472,7 +486,7 @@ namespace hd_sprites {
         std::string command_keys[HD_COMMAND_COUNT];
 
         std::string Command_Key(const s_command& command) {
-            char key[22];
+            char key[24];
             memcpy(key + 0, &command.asset, 4);
             memcpy(key + 4, &command.frame, 2);
             memcpy(key + 6, &command.x, 2);
@@ -481,6 +495,7 @@ namespace hd_sprites {
             key[11] = (char)command.glassed;
             memcpy(key + 12, &command.remap, 2);
             memcpy(key + 14, command.colors, 8);
+            memcpy(key + 22, &command.shade, 2);
             return std::string(key, sizeof(key));
         }
 
@@ -689,6 +704,46 @@ namespace hd_sprites {
         }
         s_command command = commands[current_command];
         command.remap = (uint16_t)table;
+        current_command = Alloc_Command(command);
+    }
+
+    void Begin_Masked_Remap_Draw(const s_animation_header* anim, int16_t x, int16_t y, const uint8_t* remap, const int8_t* mask, const int8_t* gray_percentages, int32_t level_count) {
+        Begin_Remap_Draw(anim, x, y, remap);
+        if (current_command == 0 || mask == nullptr || anim == nullptr) {
+            return;
+        }
+        const int32_t width = anim->width;
+        const int32_t height = anim->height;
+        std::string key((size_t)width * height + 8, '\0');
+        memcpy(&key[0], &width, 4);
+        memcpy(&key[4], &height, 4);
+        for (int32_t i = 0; i < width * height; ++i) {
+            const int32_t level = mask[i];
+            // Level 0 is drawn unshaded; level n darkens by gray_percentages[n] percent.
+            const int32_t percent = level <= 0 || level >= level_count ? 0 : gray_percentages[level];
+            key[8 + (size_t)i] = (char)(uint8_t)SDL_clamp(100 - percent, 0, 100);
+        }
+        uint32_t id;
+        const auto found = shade_mask_ids.find(key);
+        if (found != shade_mask_ids.end()) {
+            id = found->second;
+        } else {
+            id = next_shade_mask++ % HD_SHADE_MASKS;
+            if (id == 0) {
+                id = next_shade_mask++ % HD_SHADE_MASKS;
+            }
+            if (!shade_mask_keys[id].empty()) {
+                shade_mask_ids.erase(shade_mask_keys[id]);
+            }
+            s_shade_mask& shade = shade_masks[id];
+            shade.width = width;
+            shade.height = height;
+            shade.brightness.assign((const uint8_t*)key.data() + 8, (const uint8_t*)key.data() + key.size());
+            shade_mask_ids.emplace(key, id);
+            shade_mask_keys[id] = std::move(key);
+        }
+        s_command command = commands[current_command];
+        command.shade = (uint16_t)id;
         current_command = Alloc_Command(command);
     }
 
@@ -1032,6 +1087,35 @@ namespace hd_sprites {
             return 0xFF000000u | (r << 16) | (g << 8) | b;
         }
 
+        // Darkens `rgb` by the shade mask sampled bilinearly at sub-pixel (sx, sy) of mask pixel
+        // (px, py), which turns the stepped 1x shadow edge into a smooth gradient.
+        uint32_t Shade(uint32_t rgb, const s_shade_mask& shade, int32_t px, int32_t py, int32_t sx, int32_t sy) {
+            if (shade.width <= 0 || shade.height <= 0) {
+                return rgb;
+            }
+            const int32_t s = HD_SPRITES_SCALE;
+            // Sample position in 1/s pixel units, relative to mask pixel centres.
+            const int32_t fx = SDL_clamp(px * s + sx - s / 2, 0, (shade.width - 1) * s);
+            const int32_t fy = SDL_clamp(py * s + sy - s / 2, 0, (shade.height - 1) * s);
+            const int32_t x0 = fx / s;
+            const int32_t y0 = fy / s;
+            const int32_t x1 = SDL_min(x0 + 1, shade.width - 1);
+            const int32_t y1 = SDL_min(y0 + 1, shade.height - 1);
+            const int32_t wx = fx - x0 * s;
+            const int32_t wy = fy - y0 * s;
+            const uint8_t* b = shade.brightness.data();
+            const int32_t top = b[y0 * shade.width + x0] * (s - wx) + b[y0 * shade.width + x1] * wx;
+            const int32_t bottom = b[y1 * shade.width + x0] * (s - wx) + b[y1 * shade.width + x1] * wx;
+            const uint32_t percent = (uint32_t)((top * (s - wy) + bottom * wy) / (s * s));
+            if (percent >= 100) {
+                return rgb;
+            }
+            const uint32_t r = ((rgb >> 16) & 0xFF) * percent / 100u;
+            const uint32_t g = ((rgb >> 8) & 0xFF) * percent / 100u;
+            const uint32_t bl = (rgb & 0xFF) * percent / 100u;
+            return 0xFF000000u | (r << 16) | (g << 8) | bl;
+        }
+
         uint32_t Apply_Glass(uint32_t rgb, int32_t level) {
             const s_glass& glass = glass_present[level & 15];
             if (glass.intensity == 0) {
@@ -1191,7 +1275,10 @@ namespace hd_sprites {
                             } else if (command.remap != 0) {
                                 index = remap_tables[command.remap][index];
                             }
-                            const uint32_t color = palette[index];
+                            uint32_t color = palette[index];
+                            if (command.shade != 0) {
+                                color = Shade(color, shade_masks[command.shade], x - command.x, y - command.y, sx, sy);
+                            }
                             if (alpha == 255) {
                                 out[sx] = color;
                                 continue;
