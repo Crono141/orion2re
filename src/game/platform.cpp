@@ -78,7 +78,8 @@ namespace platform {
         bool Ensure_Render_Presentation();
         bool Ensure_Scaler_Output();
         void Destroy_Scaler_Output();
-        void Present_Texture_To_Output(SDL_Texture* texture);
+        void Present_Texture_To_Output(SDL_Texture* texture, bool draw_cursor = false);
+        void Render_Cursor_Overlay();
         void Apply_Pending_Cursor_State();
         void Blit_Cursor_On_Present_Surface();
         void Sync_Mouse_State_From_SDL();
@@ -431,7 +432,7 @@ namespace platform {
             return true;
         }
 
-        void Present_Texture_To_Output(SDL_Texture* texture) {
+        void Present_Texture_To_Output(SDL_Texture* texture, bool draw_cursor) {
             if (g_sdl_renderer == nullptr || texture == nullptr) {
                 return;
             }
@@ -445,6 +446,9 @@ namespace platform {
 
             SDL_RenderClear(g_sdl_renderer);
             SDL_RenderTexture(g_sdl_renderer, texture, nullptr, nullptr);
+            if (draw_cursor) {
+                Render_Cursor_Overlay();
+            }
             debug_overlay::Render_Published_Frame(g_sdl_renderer, g_present_generation);
             SDL_RenderPresent(g_sdl_renderer);
         }
@@ -920,13 +924,7 @@ namespace platform {
             input.base_factor = scalers::Get_Factor(g_applied_present_scaler);
             input.width = video::g_screen_res_x;
             input.height = video::g_screen_res_y;
-            input.cursor_x = -1;
-            const s_present_cursor_state& cursor_state = g_active_cursor_state;
-            if (cursor_state.pixels != nullptr && cursor_state.enabled != 0 && cursor_state.shape > 0) {
-                input.cursor_x = SDL_GetAtomicInt(&g_present_mouse_x);
-                input.cursor_y = SDL_GetAtomicInt(&g_present_mouse_y);
-                input.cursor_size = k_cursor_dimension;
-            }
+            input.cursor_x = -1; // the cursor is rendered as an overlay, not part of the base image
             if (input.base == nullptr || input.base_factor <= 0) {
                 return false;
             }
@@ -993,7 +991,7 @@ namespace platform {
                 hd_frame_valid = false;
                 return false;
             }
-            Present_Texture_To_Output(g_hd_texture);
+            Present_Texture_To_Output(g_hd_texture, true);
             return true;
         }
 
@@ -1007,7 +1005,9 @@ namespace platform {
                 return;
             }
 
-            Blit_Cursor_On_Present_Surface();
+            if (!hd_sprites::Enabled()) {
+                Blit_Cursor_On_Present_Surface();
+            }
             if (!scalers::Process(
                     &g_present_scaler_pipeline,
                     g_sdl_present_pixels,
@@ -1050,6 +1050,29 @@ namespace platform {
             }
 
             Present_Texture_To_Output(g_sdl_present_texture);
+        }
+
+        // With HD sprites the cursor is drawn as its own texture over the composed frame, so the
+        // area under it is not left on the low-resolution base image.
+        void Render_Cursor_Overlay() {
+            if (g_sdl_renderer == nullptr || debug_overlay::Visible()) {
+                return;
+            }
+            Apply_Pending_Cursor_State();
+            const s_present_cursor_state& cursor_state = g_active_cursor_state;
+            if (cursor_state.pixels == nullptr || cursor_state.enabled == 0 || cursor_state.shape <= 0 ||
+                !Ensure_Cursor_Surface()) {
+                return;
+            }
+            SDL_Texture* cursor = SDL_CreateTextureFromSurface(g_sdl_renderer, g_sdl_cursor_surface);
+            if (cursor == nullptr) {
+                return;
+            }
+            (void)SDL_SetTextureScaleMode(cursor, SDL_SCALEMODE_PIXELART);
+            const SDL_FRect destination = {(float)SDL_GetAtomicInt(&g_present_mouse_x),
+                (float)SDL_GetAtomicInt(&g_present_mouse_y), (float)k_cursor_dimension, (float)k_cursor_dimension};
+            SDL_RenderTexture(g_sdl_renderer, cursor, nullptr, &destination);
+            SDL_DestroyTexture(cursor);
         }
 
         void Blit_Cursor_On_Present_Surface() {

@@ -418,12 +418,41 @@ namespace hd_sprites {
             return font->state[code] == 1 ? &font->glyphs[code] : nullptr;
         }
 
+        // Commands are interned: screens redraw the same things every frame, and giving each
+        // redraw a new slot would wrap the ring within minutes, recycling slots that long-lived
+        // owners (a border drawn once into the back page) still point at.
+        std::unordered_map<std::string, uint32_t> command_ids;
+        std::string command_keys[HD_COMMAND_COUNT];
+
+        std::string Command_Key(const s_command& command) {
+            char key[22];
+            memcpy(key + 0, &command.asset, 4);
+            memcpy(key + 4, &command.frame, 2);
+            memcpy(key + 6, &command.x, 2);
+            memcpy(key + 8, &command.y, 2);
+            key[10] = (char)command.kind;
+            key[11] = (char)command.glassed;
+            memcpy(key + 12, &command.remap, 2);
+            memcpy(key + 14, command.colors, 8);
+            return std::string(key, sizeof(key));
+        }
+
         uint32_t Alloc_Command(const s_command& command) {
+            std::string key = Command_Key(command);
+            const auto found = command_ids.find(key);
+            if (found != command_ids.end()) {
+                return found->second;
+            }
             uint32_t id = next_command++ & (HD_COMMAND_COUNT - 1);
             if (id == 0) {
                 id = next_command++ & (HD_COMMAND_COUNT - 1);
             }
+            if (!command_keys[id].empty()) {
+                command_ids.erase(command_keys[id]);
+            }
             commands[id] = command;
+            command_ids.emplace(key, id);
+            command_keys[id] = std::move(key);
             return id;
         }
 
@@ -570,12 +599,19 @@ namespace hd_sprites {
         if (current_command == 0 || remap == nullptr) {
             return;
         }
-        uint32_t table = next_remap_table++ % HD_REMAP_TABLES;
-        if (table == 0) {
+        // Reuse the most recent table when it is unchanged (the usual case), so remapped
+        // redraws intern to the same command.
+        uint32_t table = (next_remap_table - 1) % HD_REMAP_TABLES;
+        if (table == 0 || memcmp(remap_tables[table], remap, 256) != 0) {
             table = next_remap_table++ % HD_REMAP_TABLES;
+            if (table == 0) {
+                table = next_remap_table++ % HD_REMAP_TABLES;
+            }
+            memcpy(remap_tables[table], remap, 256);
         }
-        memcpy(remap_tables[table], remap, 256);
-        commands[current_command].remap = (uint16_t)table;
+        s_command command = commands[current_command];
+        command.remap = (uint16_t)table;
+        current_command = Alloc_Command(command);
     }
 
     void Begin_Draw_To_Bitmap(const s_animation_header* src, int16_t x, int16_t y, const void* target_bitmap) {
