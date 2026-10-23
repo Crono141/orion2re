@@ -119,6 +119,9 @@ namespace hd_sprites {
         std::unordered_map<std::string, uint32_t> stats_missing;
         uint32_t stats_draws;
         uint32_t stats_interval = 20000;
+        uint32_t stats_glyph_commands;
+        uint32_t stats_glyph_missing_art;
+        uint32_t stats_compose_calls;
 
         void Stats_Missing(const std::string& key) {
             stats_missing[key]++;
@@ -526,8 +529,10 @@ namespace hd_sprites {
             font->state[code] = Load_Frame_Png(font->directory + name, &font->glyphs[code]) ? 1 : 2;
         }
         if (font->state[code] != 1) {
+            stats_glyph_missing_art++;
             return;
         }
+        stats_glyph_commands++;
         s_command command = {slot, (int16_t)code, x, y, COMMAND_GLYPH, {}};
         memcpy(command.colors, colors, sizeof(command.colors));
         current_command = Alloc_Command(command);
@@ -707,11 +712,20 @@ namespace hd_sprites {
         }
 
         int32_t replaced = 0;
+        int32_t replaced_glyph = 0;
+        int32_t owned_pixels = 0;
+        int32_t stale_pixels = 0;
         for (int32_t y = 0; y < in->height; ++y) {
             for (int32_t x = 0; x < in->width; ++x) {
                 const size_t i = (size_t)y * in->width + x;
                 const uint32_t owner = plane_published[i];
+                if (owner != 0) {
+                    owned_pixels++;
+                }
                 if (owner == 0 || (owner & 0xFF) != in->page[i]) {
+                    if (owner != 0) {
+                        stale_pixels++;
+                    }
                     continue;
                 }
                 if (in->cursor_x >= 0 && x >= in->cursor_x && x < in->cursor_x + in->cursor_size &&
@@ -768,7 +782,15 @@ namespace hd_sprites {
                     }
                 }
                 ++replaced;
+                if (glyph) {
+                    ++replaced_glyph;
+                }
             }
+        }
+        if (stats_enabled && (++stats_compose_calls % 100) == 0) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "hd stats: compose owned=%d stale=%d replaced=%d (glyph %d); glyph commands %u, glyphs without art %u",
+                owned_pixels, stale_pixels, replaced, replaced_glyph, stats_glyph_commands, stats_glyph_missing_art);
         }
         return replaced;
     }
