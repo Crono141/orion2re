@@ -73,6 +73,9 @@ namespace hd_sprites {
     void Stamp_Bitmap(const void* bitmap, int32_t index, uint8_t value);
     // Same-size copy of src's HD surface to dst (bitmap::Copy_Bitmap_To_Bitmap etc.).
     void Bitmap_Copy(const void* dst, const void* src);
+    // `dst` (width x height, pixels at `dst_pixels`) is a resized copy of `src`
+    // (bitmap::Scale_Bitmap, e.g. stars on a zoomed-out galaxy).
+    void Bitmap_Scale(const void* dst, const void* src, const uint8_t* dst_pixels, int32_t width, int32_t height);
     // A rectangle of the current page captured into `bitmap`.
     void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height);
 

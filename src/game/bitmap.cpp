@@ -731,6 +731,8 @@ namespace bitmap {
         if (src == dst) {
             animate::animation_header->width = new_width;
             animate::animation_header->height = new_height;
+        } else {
+            hd_sprites::Bitmap_Scale(dst, src, dst_frame_ptr, new_width, new_height);
         }
     }
 

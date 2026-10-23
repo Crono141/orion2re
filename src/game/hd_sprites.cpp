@@ -1281,6 +1281,65 @@ namespace hd_sprites {
         target.mark.assign(target.shadow.size(), 0u);
     }
 
+    void Bitmap_Scale(const void* dst, const void* src, const uint8_t* dst_pixels, int32_t width, int32_t height) {
+        if (!enabled || dst == src || dst_pixels == nullptr) {
+            return;
+        }
+        Flush_Pending();
+        const auto from = images.find(src);
+        auto to = images.find(dst);
+        if (from == images.end() || to == images.end() || from->second.hd.empty() || to->second.width != width ||
+            to->second.height != height) {
+            return;
+        }
+        const s_surface& source = from->second;
+        s_surface& target = to->second;
+        Ensure_Hd(target);
+        const int32_t src_w = source.width * S;
+        const int32_t src_h = source.height * S;
+        const int32_t dst_w = width * S;
+        const int32_t dst_h = height * S;
+        // Box filter over the source HD pixels each target HD pixel covers: coverage is averaged,
+        // the colour comes from the most covered source pixel.
+        for (int32_t y = 0; y < dst_h; ++y) {
+            const int32_t sy0 = y * src_h / dst_h;
+            const int32_t sy1 = SDL_max(sy0 + 1, (y + 1) * src_h / dst_h);
+            for (int32_t x = 0; x < dst_w; ++x) {
+                const int32_t sx0 = x * src_w / dst_w;
+                const int32_t sx1 = SDL_max(sx0 + 1, (x + 1) * src_w / dst_w);
+                uint32_t coverage = 0;
+                uint32_t samples = 0;
+                uint32_t best = HD_CLEAR;
+                uint32_t best_alpha = 0;
+                for (int32_t sy = sy0; sy < sy1 && sy < src_h; ++sy) {
+                    for (int32_t sx = sx0; sx < sx1 && sx < src_w; ++sx) {
+                        const uint32_t pixel = source.hd[(size_t)sy * src_w + sx];
+                        const uint32_t alpha = (pixel & HD_LITERAL) != 0 || (pixel & HD_CLEAR) == 0 ? 255u : (pixel >> 16) & 0xFF;
+                        coverage += alpha;
+                        samples++;
+                        if (alpha > best_alpha) {
+                            best_alpha = alpha;
+                            best = pixel;
+                        }
+                    }
+                }
+                const uint32_t alpha = samples != 0 ? coverage / samples : 0;
+                uint32_t out;
+                if (alpha >= 255 && (best & HD_CLEAR) == 0) {
+                    out = best;
+                } else if ((best & HD_LITERAL) != 0) {
+                    out = alpha >= 128 ? best : (HD_CLEAR | (alpha << 16));
+                } else {
+                    out = (best & 0xFFu) | (alpha << 16) | HD_CLEAR;
+                }
+                target.hd[(size_t)y * dst_w + x] = out;
+            }
+        }
+        for (int32_t i = 0; i < width * height; ++i) {
+            target.shadow[(size_t)i] = dst_pixels[i];
+        }
+    }
+
     void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height) {
         if (!enabled) {
             return;
