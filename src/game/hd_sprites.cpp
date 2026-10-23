@@ -679,8 +679,12 @@ namespace hd_sprites {
                 const s_surface& image = *draw.image;
                 const int32_t ix = x - draw.image_x;
                 const int32_t iy = y - draw.image_y;
-                if (!image.hd.empty() && ix >= 0 && iy >= 0 && ix < image.width && iy < image.height &&
-                    image.shadow[(size_t)iy * image.width + ix] == value) {
+                const uint16_t made_for = !image.hd.empty() && ix >= 0 && iy >= 0 && ix < image.width && iy < image.height
+                    ? image.shadow[(size_t)iy * image.width + ix]
+                    : SHADOW_NONE;
+                // A remapped image draw (e.g. the hovered colony building flashing) recolours
+                // the image's HD pixels with the same table.
+                if (made_for != SHADOW_NONE && (draw.remapped ? draw.remap[made_for] : made_for) == value) {
                     const uint32_t* src = &image.hd[(size_t)iy * S * image.width * S + (size_t)ix * S];
                     const size_t src_stride = (size_t)image.width * S;
                     uint32_t* block = Block(target, x, y);
@@ -692,8 +696,11 @@ namespace hd_sprites {
                             if ((pixel & HD_CLEAR) != 0 && (pixel & HD_LITERAL) == 0) {
                                 // Partly covered over the image's transparent background.
                                 if (((pixel >> 16) & 0xFF) != 0) {
-                                    out = Over_Index(out, (uint8_t)pixel, (pixel >> 16) & 0xFF);
+                                    out = Over_Index(out, draw.remapped ? draw.remap[pixel & 0xFF] : (uint8_t)pixel, (pixel >> 16) & 0xFF);
                                 }
+                            } else if (draw.remapped && (pixel & HD_LITERAL) == 0) {
+                                out = (pixel & 0xFFFF0000u) | ((uint32_t)draw.remap[(pixel >> 8) & 0xFF] << 8) |
+                                    draw.remap[pixel & 0xFF];
                             } else {
                                 out = pixel;
                             }
@@ -711,8 +718,50 @@ namespace hd_sprites {
                 target.mark[(size_t)y * target.width + x] == generation;
         }
 
+        bool Interior(const s_surface& target, const s_stamp& stamp) {
+            const int32_t x = stamp.offset % target.width;
+            const int32_t y = stamp.offset / target.width;
+            return stamp.level < 0 && Marked(target, x - 1, y) && Marked(target, x + 1, y) && Marked(target, x, y - 1) &&
+                Marked(target, x, y + 1);
+        }
+
+        // Whether the art agrees with what the game drew: inside the sprite, the art's colour at
+        // each pixel centre must mostly be close to the pixel written. Art made with the wrong
+        // palette, for another frame or for different source pixels fails, and the draw shows
+        // the original pixels instead.
+        bool Art_Matches(const s_surface& target) {
+            int32_t samples = 0;
+            int32_t mismatches = 0;
+            for (const s_stamp& stamp : pending) {
+                if (stamp.target != &target || !Interior(target, stamp)) {
+                    continue;
+                }
+                const int32_t x = stamp.offset % target.width;
+                const int32_t y = stamp.offset / target.width;
+                const uint32_t art = Base_Color(Apply_Art(Indexed(stamp.value), x, y, S / 2, S / 2));
+                const uint32_t drawn = Base_Rgb(stamp.value);
+                const int32_t distance = abs((int32_t)((art >> 16) & 0xFF) - (int32_t)((drawn >> 16) & 0xFF)) +
+                    abs((int32_t)((art >> 8) & 0xFF) - (int32_t)((drawn >> 8) & 0xFF)) +
+                    abs((int32_t)(art & 0xFF) - (int32_t)(drawn & 0xFF));
+                samples++;
+                mismatches += distance > 150 ? 1 : 0;
+            }
+            return samples < 12 || mismatches * 10 < samples * 6;
+        }
+
         // Renders the pending stamps of an art draw into one target.
         void Render_Pending_Target(s_surface& target) {
+            if (!Art_Matches(target)) {
+                if (stats_enabled) {
+                    Stats_Missing("art-mismatch:" + draw.name);
+                }
+                for (const s_stamp& stamp : pending) {
+                    if (stamp.target == &target) {
+                        Render_Now(target, stamp.offset, stamp.value, stamp.level);
+                    }
+                }
+                return;
+            }
             int32_t x0 = target.width;
             int32_t y0 = target.height;
             int32_t x1 = -1;
@@ -729,9 +778,7 @@ namespace hd_sprites {
                 y1 = SDL_max(y1, y);
                 // Inside the sprite the art goes over the original pixel; at its edges over the
                 // HD pixels already there, so the art's own soft outline shows.
-                const bool interior = stamp.level < 0 && Marked(target, x - 1, y) && Marked(target, x + 1, y) &&
-                    Marked(target, x, y - 1) && Marked(target, x, y + 1);
-                if (interior) {
+                if (Interior(target, stamp)) {
                     Fill_Block(target, x, y, Indexed(stamp.value));
                 }
                 Apply_Art_Block(target, x, y);
@@ -978,11 +1025,7 @@ namespace hd_sprites {
         if (remap == nullptr) {
             return;
         }
-        if (draw.source == SOURCE_IMAGE) {
-            draw.source = SOURCE_NONE; // remapped images keep their original look
-            return;
-        }
-        if (draw.source == SOURCE_ART) {
+        if (draw.source == SOURCE_ART || draw.source == SOURCE_IMAGE) {
             memcpy(draw.remap, remap, sizeof(draw.remap));
             draw.remapped = true;
         }
