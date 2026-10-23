@@ -92,6 +92,10 @@ namespace hd_sprites {
     // fills): its HD pixels become the original pixels enlarged, whatever values were written.
     void Overwrite_Rect(const uint8_t* page, int32_t x1, int32_t y1, int32_t x2, int32_t y2);
 
+    // The rectangle (x, y, width, height) of `page` went through glass level `level`
+    // (graphics::Tint_Fill): its HD pixels are tinted the same way in true colour.
+    void Tint_Rect(const uint8_t* page, int32_t x, int32_t y, int32_t width, int32_t height, int32_t level);
+
     // Like Stamp_Run, for pixels written to an explicit page (draws that write the back page
     // directly) instead of the current video page.
     void Stamp_Page(const uint8_t* page, const uint8_t* dst, int32_t count);
