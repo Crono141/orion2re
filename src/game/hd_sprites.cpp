@@ -130,6 +130,39 @@ namespace hd_sprites {
         // ORION2RE_HD_STATS: count draws that had no HD art, by asset, and log them
         // periodically. Debug aid for finding coverage gaps.
         bool stats_enabled;
+
+        // ORION2RE_HD_CAPTURE=<dir>: write the live palette the first time each LBX sprite is
+        // drawn under it, as <dir>/<LBX>_<EEE>_<hash>.pal (256 x RGB, 8-bit). The HD pipeline uses
+        // these instead of palettes inferred from the source code.
+        std::string capture_dir;
+        std::unordered_map<std::string, bool> captured;
+
+        void Capture_Palette(const std::string& name) {
+            uint8_t rgb[768];
+            uint32_t hash = 2166136261u;
+            for (int32_t i = 0; i < 256; ++i) {
+                const s_palette_entry& entry = video::current_palette[i];
+                rgb[i * 3 + 0] = (uint8_t)((entry.r & 0x3F) * 255 / 63);
+                rgb[i * 3 + 1] = (uint8_t)((entry.g & 0x3F) * 255 / 63);
+                rgb[i * 3 + 2] = (uint8_t)((entry.b & 0x3F) * 255 / 63);
+            }
+            for (uint8_t byte : rgb) {
+                hash = (hash ^ byte) * 16777619u;
+            }
+            char file[160];
+            std::string base = name;
+            std::replace(base.begin(), base.end(), '#', '_');
+            snprintf(file, sizeof(file), "%s_%08x.pal", base.c_str(), hash);
+            if (!captured.emplace(file, true).second) {
+                return;
+            }
+            const std::string path = capture_dir + "/" + file;
+            SDL_IOStream* out = SDL_IOFromFile(path.c_str(), "wb");
+            if (out != nullptr) {
+                (void)SDL_WriteIO(out, rgb, sizeof(rgb));
+                SDL_CloseIO(out);
+            }
+        }
         std::unordered_map<const void*, std::string> stats_names;
         std::unordered_map<std::string, uint32_t> stats_missing;
         uint32_t stats_draws;
@@ -502,6 +535,12 @@ namespace hd_sprites {
             if (!enabled || anim == nullptr) {
                 return;
             }
+            if (!capture_dir.empty()) {
+                const auto name = stats_names.find(anim);
+                if (name != stats_names.end()) {
+                    Capture_Palette(name->second);
+                }
+            }
             const auto plane = bitmap_planes.find(anim);
             if (plane != bitmap_planes.end() && plane->second.width == anim->width &&
                 plane->second.height == anim->height) {
@@ -550,6 +589,11 @@ namespace hd_sprites {
         stats_enabled = enabled && stats != nullptr;
         const char* debug = SDL_getenv("ORION2RE_HD_DEBUG");
         debug_stale = enabled && debug != nullptr && strcmp(debug, "stale") == 0;
+        const char* capture = SDL_getenv("ORION2RE_HD_CAPTURE");
+        if (capture != nullptr && capture[0] != '\0') {
+            capture_dir = capture;
+            (void)SDL_CreateDirectory(capture_dir.c_str());
+        }
         const char* probe = SDL_getenv("ORION2RE_HD_PROBE");
         if (probe != nullptr) {
             (void)sscanf(probe, "%d,%d", &probe_x, &probe_y);
@@ -574,9 +618,14 @@ namespace hd_sprites {
         if (!enabled || data == nullptr || lbx_name == nullptr || size < (int32_t)sizeof(s_registration::header)) {
             return;
         }
-        if (stats_enabled) {
+        if (stats_enabled || !capture_dir.empty()) {
             char key[64];
-            snprintf(key, sizeof(key), "%s#%d", lbx_name, (int)entry);
+            snprintf(key, sizeof(key), "%s#%03d", lbx_name, (int)entry);
+            for (char* c = key; *c != '\0'; ++c) {
+                if (*c >= 'a' && *c <= 'z') {
+                    *c = (char)(*c - 'a' + 'A');
+                }
+            }
             stats_names[data] = key;
         }
         s_registration registration = {};
