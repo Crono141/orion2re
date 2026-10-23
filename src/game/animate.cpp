@@ -41,6 +41,7 @@ namespace animate {
 
                 int dest_idx = row_base + skip;
                 int sprite_end = sprite_idx + count;
+                const int run_start = dest_idx;
 
                 while (sprite_idx < sprite_end) {
                     if (dest_idx >= 0x12C00) {
@@ -52,6 +53,7 @@ namespace animate {
                     dest_idx++;
                     sprite_idx++;
                 }
+                hd_sprites::Stamp_Run((const uint8_t*)(vpage + run_start), (dest_idx - run_start) * 4);
             }
         }
 
@@ -90,6 +92,7 @@ namespace animate {
 
     void __cdecl Draw(int16_t x, int16_t y, s_animation_header* anim) {
         animation_header = anim;
+        hd_sprites::Begin_Draw(anim, x, y);
 
         if (anim->flags & ANIMATION_FLAG_HAS_PALETTE) {
             Set_Animation_Palette();
@@ -145,6 +148,7 @@ namespace animate {
         } else {
             if (video::screen_refresh_flag > 1) {
                 if (anim->width == 0 || anim->height == 0) {
+                    hd_sprites::End_Draw();
                     return;
                 }
 
@@ -200,6 +204,7 @@ namespace animate {
         }
 
     update_frame:
+        hd_sprites::End_Draw();
         anim->current_frame++;
         if (anim->flags & 0x20) {
             if (anim->current_frame >= anim->frame_count) {
@@ -534,6 +539,7 @@ namespace animate {
 
     void __cdecl Draw_No_Glass(int16_t x, int16_t y, s_animation_header* header) {
         animation_header = header;
+        hd_sprites::Begin_Draw(header, x, y);
 
         int16_t x2 = x + header->width - 1;
         int16_t y2 = y + header->height - 1;
@@ -634,6 +640,7 @@ namespace animate {
             }
         }
 
+        hd_sprites::End_Draw();
         animation_header->current_frame++;
 
         if ((animation_header->flags & 0x20) != 0) {
