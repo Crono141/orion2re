@@ -113,6 +113,8 @@ namespace hd_sprites {
             TIMER_PUBLISH,
             TIMER_COUNT };
         uint64_t stats_timer_ns[TIMER_COUNT];
+        uint64_t stats_last_publish_ns;
+        uint64_t stats_longest_frame_ns;
 
         struct s_scoped_timer {
             e_timer timer;
@@ -1821,6 +1823,13 @@ namespace hd_sprites {
             return;
         }
         Flush_Pending();
+        if (stats_enabled) {
+            const uint64_t now = SDL_GetTicksNS();
+            if (stats_last_publish_ns != 0) {
+                stats_longest_frame_ns = SDL_max(stats_longest_frame_ns, now - stats_last_publish_ns);
+            }
+            stats_last_publish_ns = now;
+        }
         s_scoped_timer timer(TIMER_PUBLISH);
         Upgrade_Deferred();
         publish_count++;
@@ -1832,16 +1841,18 @@ namespace hd_sprites {
             if (++stats_publishes % 100 == 0) {
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "hd stats: %u pixels settled to plain scaling over the last 100 frames; per frame: render %.2f ms, "
-                    "page copies %.2f ms, publish %.2f ms; cache %lld MB decoded, %d frames queued, %d draws waiting for art",
+                    "page copies %.2f ms, publish %.2f ms, longest frame %.0f ms; cache %lld MB decoded, %d frames queued, %d draws waiting for art",
                     stats_settled_pixels,
                     (double)stats_timer_ns[TIMER_RENDER] / 1e8,
                     (double)stats_timer_ns[TIMER_COPY] / 1e8,
                     (double)stats_timer_ns[TIMER_PUBLISH] / 1e8,
+                    (double)stats_longest_frame_ns / 1e6,
                     (long long)(decoded_bytes.load() >> 20),
                     Queue_Length(),
                     (int)deferred.size());
                 stats_settled_pixels = 0;
                 memset(stats_timer_ns, 0, sizeof(stats_timer_ns));
+                stats_longest_frame_ns = 0;
             }
         }
         const size_t row_size = (size_t)page_off.width * S * S;
