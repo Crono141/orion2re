@@ -648,7 +648,9 @@ namespace fonts {
             clipped_h = max_y_idx - draw_y + 1;
         }
 
+        hd_sprites::Begin_Glyph(font_name, current_font_style, (uint8_t)ch, x, y, font_header.selected_colors.colors);
         Print_Clipped_Letter_To_Bitmap(draw_x, draw_y, ch, src_x, clipped_w, src_y, clipped_h, bitmap);
+        hd_sprites::End_Draw();
     }
 
     void __cdecl Print_To_Bitmap(int16_t x, int16_t y, const char* text, void* bitmap) {
@@ -954,6 +956,7 @@ namespace fonts {
                         if (data <= 0x80) {
                             if (data != 0 && dest_clip_start <= current_dest_offset && current_dest_offset < dest_clip_end) {
                                 frame_ptr[current_dest_offset] = font_header.selected_colors.colors[data - 1];
+                                hd_sprites::Stamp_Bitmap(bitmap, current_dest_offset, frame_ptr[current_dest_offset]);
                             }
                             current_dest_offset++;
                         } else {

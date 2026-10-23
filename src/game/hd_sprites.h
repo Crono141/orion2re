@@ -39,6 +39,19 @@ namespace hd_sprites {
     // top-left of the glyph; colors are the 8 style colours the glyph's roles map to.
     void Begin_Glyph(const char* font_file, int16_t font_index, uint8_t code, int16_t x, int16_t y, const uint8_t* colors);
 
+    // Off-screen images (bitmap-mode animations built with bitmap::*) carry their own owner
+    // layer, so sprites and text composed into them keep their HD art when the image is
+    // later drawn to the screen.
+    void Bitmap_Reset(const void* bitmap, int32_t width, int32_t height);
+    // Source `src` drawn with its top-left at (x, y) of `target_bitmap`.
+    void Begin_Draw_To_Bitmap(const s_animation_header* src, int16_t x, int16_t y, const void* target_bitmap);
+    // Pixel `index` of `bitmap` was written with `value` by the current draw.
+    void Stamp_Bitmap(const void* bitmap, int32_t index, uint8_t value);
+    // Same-size copy of src's owner layer to dst (bitmap::Copy_Bitmap_To_Bitmap etc.).
+    void Bitmap_Copy(const void* dst, const void* src);
+    // Owner layer of a rectangle of the current page captured into `bitmap`.
+    void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height);
+
     // Records that `count` pixels at `dst` (inside the current video page) were written.
     void Stamp_Run(const uint8_t* dst, int32_t count);
 

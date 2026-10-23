@@ -89,6 +89,22 @@ namespace hd_sprites {
         uint32_t next_command = 1;
         uint32_t current_command;
 
+        // Owner layers of off-screen images, keyed by the image header. Values have the same
+        // meaning as page owners, with command positions in the image's own coordinates.
+        struct s_bitmap_plane {
+            int32_t width;
+            int32_t height;
+            std::vector<uint32_t> owners;
+        };
+        std::unordered_map<const void*, s_bitmap_plane> bitmap_planes;
+
+        // When the current draw's source is an image with an owner layer, each written pixel
+        // takes its owner from that layer, re-based to where the image is being drawn.
+        const s_bitmap_plane* source_plane;
+        int32_t source_origin_x;
+        int32_t source_origin_y;
+        std::unordered_map<uint32_t, uint32_t> translated;
+
         // Assets are appended and never moved or freed, so the presenter can read them while
         // the game thread registers new ones.
         s_hd_asset* assets[HD_MAX_ASSETS];
@@ -342,6 +358,97 @@ namespace hd_sprites {
             return font->state[code] == 1 ? &font->glyphs[code] : nullptr;
         }
 
+        uint32_t Alloc_Command(const s_command& command) {
+            uint32_t id = next_command++ & (HD_COMMAND_COUNT - 1);
+            if (id == 0) {
+                id = next_command++ & (HD_COMMAND_COUNT - 1);
+            }
+            commands[id] = command;
+            return id;
+        }
+
+        // A copy of command `id` moved by the current source origin.
+        uint32_t Translate(uint32_t id) {
+            const auto found = translated.find(id);
+            if (found != translated.end()) {
+                return found->second;
+            }
+            s_command moved = commands[id];
+            moved.x = (int16_t)(moved.x + source_origin_x);
+            moved.y = (int16_t)(moved.y + source_origin_y);
+            const uint32_t new_id = Alloc_Command(moved);
+            translated.emplace(id, new_id);
+            return new_id;
+        }
+
+        void Clear_Draw_State() {
+            current_command = 0;
+            source_plane = nullptr;
+            translated.clear();
+        }
+
+        // Owner for a pixel at target coordinates (x, y) written with `value`.
+        uint32_t Owner_For(int32_t x, int32_t y, uint8_t value) {
+            if (current_command != 0) {
+                return (current_command << 8) | value;
+            }
+            if (source_plane == nullptr) {
+                return 0;
+            }
+            const int32_t sx = x - source_origin_x;
+            const int32_t sy = y - source_origin_y;
+            if (sx < 0 || sy < 0 || sx >= source_plane->width || sy >= source_plane->height) {
+                return 0;
+            }
+            const uint32_t owner = source_plane->owners[(size_t)sy * source_plane->width + sx];
+            if (owner == 0 || (owner & 0xFF) != value) {
+                return 0;
+            }
+            return (Translate(owner >> 8) << 8) | value;
+        }
+
+        // Sets up the current draw for `anim` drawn with its top-left at (x, y).
+        void Begin_Source(const s_animation_header* anim, int16_t x, int16_t y) {
+            Clear_Draw_State();
+            if (!enabled || anim == nullptr) {
+                return;
+            }
+            const auto plane = bitmap_planes.find(anim);
+            if (plane != bitmap_planes.end() && plane->second.width == anim->width &&
+                plane->second.height == anim->height) {
+                source_plane = &plane->second;
+                source_origin_x = x;
+                source_origin_y = y;
+                return;
+            }
+            const auto found = registrations.find(anim);
+            if (found == registrations.end()) {
+                if (stats_enabled) {
+                    const auto name = stats_names.find(anim);
+                    Stats_Missing(name != stats_names.end()
+                            ? name->second
+                            : "unregistered:" + std::to_string(anim->width) + "x" + std::to_string(anim->height));
+                }
+                return;
+            }
+            // The buffer may have been reused for other data since it was loaded; the header
+            // (dimensions, frame count, flags) must still match, apart from the frame counter.
+            uint8_t header[12];
+            memcpy(header, anim, sizeof(header));
+            memcpy(header + 4, found->second.header + 4, 2);
+            if (memcmp(header, found->second.header, sizeof(header)) != 0) {
+                return;
+            }
+            s_hd_asset* asset = assets[found->second.asset];
+            if (!asset->loaded) {
+                Load_Asset(asset);
+            }
+            if (Resolve_Frame(asset, anim->current_frame) == nullptr) {
+                return;
+            }
+            current_command = Alloc_Command({found->second.asset, anim->current_frame, x, y, COMMAND_SPRITE, {}});
+        }
+
     } // namespace
 
     void Initialize() {
@@ -389,45 +496,16 @@ namespace hd_sprites {
     }
 
     void Begin_Draw(const s_animation_header* anim, int16_t x, int16_t y) {
-        current_command = 0;
-        if (!enabled || anim == nullptr) {
-            return;
-        }
-        const auto found = registrations.find(anim);
-        if (found == registrations.end()) {
-            if (stats_enabled) {
-                const auto name = stats_names.find(anim);
-                Stats_Missing(name != stats_names.end() ? name->second
-                                                        : "unregistered:" + std::to_string(anim->width) + "x" +
-                                                              std::to_string(anim->height));
-            }
-            return;
-        }
-        // The buffer may have been reused for other data since it was loaded; the header
-        // (dimensions, frame count, flags) must still match, apart from the frame counter.
-        uint8_t header[12];
-        memcpy(header, anim, sizeof(header));
-        memcpy(header + 4, found->second.header + 4, 2);
-        if (memcmp(header, found->second.header, sizeof(header)) != 0) {
-            return;
-        }
-        s_hd_asset* asset = assets[found->second.asset];
-        if (!asset->loaded) {
-            Load_Asset(asset);
-        }
-        if (Resolve_Frame(asset, anim->current_frame) == nullptr) {
-            return;
-        }
-        uint32_t id = next_command++ & (HD_COMMAND_COUNT - 1);
-        if (id == 0) {
-            id = next_command++ & (HD_COMMAND_COUNT - 1);
-        }
-        commands[id] = {found->second.asset, anim->current_frame, x, y, COMMAND_SPRITE, {}};
-        current_command = id;
+        Begin_Source(anim, x, y);
+    }
+
+    void Begin_Draw_To_Bitmap(const s_animation_header* src, int16_t x, int16_t y, const void* target_bitmap) {
+        (void)target_bitmap;
+        Begin_Source(src, x, y);
     }
 
     void Begin_Glyph(const char* font_file, int16_t font_index, uint8_t code, int16_t x, int16_t y, const uint8_t* colors) {
-        current_command = 0;
+        Clear_Draw_State();
         if (!initialized) {
             Initialize();
         }
@@ -450,18 +528,13 @@ namespace hd_sprites {
         if (font->state[code] != 1) {
             return;
         }
-        uint32_t id = next_command++ & (HD_COMMAND_COUNT - 1);
-        if (id == 0) {
-            id = next_command++ & (HD_COMMAND_COUNT - 1);
-        }
         s_command command = {slot, (int16_t)code, x, y, COMMAND_GLYPH, {}};
         memcpy(command.colors, colors, sizeof(command.colors));
-        commands[id] = command;
-        current_command = id;
+        current_command = Alloc_Command(command);
     }
 
     void End_Draw() {
-        current_command = 0;
+        Clear_Draw_State();
     }
 
     void Stamp_Run(const uint8_t* dst, int32_t count) {
@@ -478,14 +551,91 @@ namespace hd_sprites {
             return;
         }
         uint32_t* owner = plane + offset;
-        if (current_command == 0) {
+        if (current_command == 0 && source_plane == nullptr) {
             memset(owner, 0, (size_t)count * sizeof(uint32_t));
             return;
         }
-        const uint32_t tag = current_command << 8;
+        int32_t x = (int32_t)(offset % plane_width);
+        int32_t y = (int32_t)(offset / plane_width);
         for (int32_t i = 0; i < count; ++i) {
-            owner[i] = tag | dst[i];
+            owner[i] = Owner_For(x, y, dst[i]);
+            if (++x == plane_width) {
+                x = 0;
+                ++y;
+            }
         }
+    }
+
+    void Bitmap_Reset(const void* bitmap, int32_t width, int32_t height) {
+        if (!enabled || bitmap == nullptr || width <= 0 || height <= 0) {
+            return;
+        }
+        s_bitmap_plane& plane = bitmap_planes[bitmap];
+        plane.width = width;
+        plane.height = height;
+        plane.owners.assign((size_t)width * (size_t)height, 0);
+    }
+
+    void Stamp_Bitmap(const void* bitmap, int32_t index, uint8_t value) {
+        if (!enabled) {
+            return;
+        }
+        const auto found = bitmap_planes.find(bitmap);
+        if (found == bitmap_planes.end()) {
+            return;
+        }
+        s_bitmap_plane& plane = found->second;
+        if (index < 0 || (size_t)index >= plane.owners.size()) {
+            return;
+        }
+        plane.owners[(size_t)index] = Owner_For(index % plane.width, index / plane.width, value);
+    }
+
+    void Bitmap_Copy(const void* dst, const void* src) {
+        if (!enabled || dst == src) {
+            return;
+        }
+        const auto from = bitmap_planes.find(src);
+        auto to = bitmap_planes.find(dst);
+        if (to == bitmap_planes.end()) {
+            return;
+        }
+        if (from == bitmap_planes.end() || from->second.width != to->second.width ||
+            from->second.height != to->second.height) {
+            std::fill(to->second.owners.begin(), to->second.owners.end(), 0u);
+            return;
+        }
+        to->second.owners = from->second.owners;
+    }
+
+    void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height) {
+        if (!enabled) {
+            return;
+        }
+        auto to = bitmap_planes.find(bitmap);
+        const uint32_t* page_plane = Owner_Plane_For(video::current_video_page);
+        if (to == bitmap_planes.end() || page_plane == nullptr || to->second.width != width ||
+            to->second.height != height) {
+            return;
+        }
+        Clear_Draw_State();
+        source_origin_x = -x1;
+        source_origin_y = -y1;
+        for (int32_t y = 0; y < height; ++y) {
+            for (int32_t x = 0; x < width; ++x) {
+                const int32_t px = x1 + x;
+                const int32_t py = y1 + y;
+                uint32_t owner = 0;
+                if (px >= 0 && py >= 0 && px < plane_width && py < plane_height) {
+                    const uint32_t page_owner = page_plane[(size_t)py * plane_width + px];
+                    if (page_owner != 0) {
+                        owner = (Translate(page_owner >> 8) << 8) | (page_owner & 0xFF);
+                    }
+                }
+                to->second.owners[(size_t)y * width + x] = owner;
+            }
+        }
+        Clear_Draw_State();
     }
 
     void Allocate_Planes(int32_t width, int32_t height) {
