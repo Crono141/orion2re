@@ -89,6 +89,7 @@ namespace graphics {
             }
         }
 
+        hd_sprites::Overwrite_Rect(video::current_video_page, x1, y1, x2, y2);
         platform::Unlock_Appropriate_Render_Buffer();
     }
 
@@ -177,6 +178,7 @@ namespace graphics {
         uint8_t* framebuffer = video::current_video_page;
         int32_t offset = static_cast<int32_t>(y) * video::g_screen_res_x + static_cast<int32_t>(x);
         framebuffer[offset] = color;
+        hd_sprites::Overwrite_Rect(framebuffer, x, y, x, y);
 
         platform::Unlock_Appropriate_Render_Buffer();
     }
@@ -361,6 +363,7 @@ namespace graphics {
             }
         }
 
+        hd_sprites::Overwrite_Rect(video::current_video_page, x1, y1, x2, y2);
         platform::Unlock_Appropriate_Render_Buffer();
     }
 
@@ -442,6 +445,7 @@ namespace graphics {
             }
         }
 
+        hd_sprites::Overwrite_Rect(video::current_video_page, x1, y1, x2, y2);
         platform::Unlock_Appropriate_Render_Buffer();
     }
 
