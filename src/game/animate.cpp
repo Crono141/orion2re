@@ -290,7 +290,7 @@ namespace animate {
                     } else {
                         uint8_t background_pixel = video_ptr[dest_idx];
                         video_ptr[dest_idx] = video::glass_remap_colors[pixel - 0xF0][background_pixel];
-                        hd_sprites::Stamp_Glass(&video_ptr[dest_idx], background_pixel);
+                        hd_sprites::Stamp_Glass(&video_ptr[dest_idx], background_pixel, pixel - 0xF0);
                     }
                     dest_idx++;
                 }
@@ -328,7 +328,7 @@ namespace animate {
                             } else {
                                 uint8_t existing_pixel = v_page[screen_offset];
                                 v_page[screen_offset] = video::glass_remap_colors[pixel - 0xF0][existing_pixel];
-                                hd_sprites::Stamp_Glass(&v_page[screen_offset], existing_pixel);
+                                hd_sprites::Stamp_Glass(&v_page[screen_offset], existing_pixel, pixel - 0xF0);
                             }
                         }
                         sprite_idx++;

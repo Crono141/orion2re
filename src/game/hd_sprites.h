@@ -2,26 +2,33 @@
 
 #include <stdint.h>
 
-#include <vector>
-
 struct s_animation_header;
 
 namespace video {
     struct s_palette_color;
 }
 
-// Present-time replacement of game sprites with higher-resolution art.
+// Parallel 4x rendering of the game screen with higher-resolution art.
 //
-// The engine keeps drawing 8-bit pixels into its 640x480 pages. Alongside each page, an owner
-// plane records which sprite draw wrote each pixel and the value it wrote. At present time,
-// every source pixel whose page value still equals the recorded value, and whose sprite has
-// HD art, is replaced by the matching block of HD pixels. Anything that later overwrote the
-// pixel (text, fills, glass, remaps, captures) no longer matches and falls back to the normal
-// scaler output, so only the sprite blitters need to record ownership.
+// The engine keeps drawing 8-bit pixels into its 640x480 pages, and everything that reads
+// them (game logic, hit tests, captures) is unchanged. Alongside each page, and alongside
+// off-screen images, an HD surface holds 4x4 HD pixels per page pixel. The hooked blitters
+// report every page pixel a draw writes ("stamps"); at the end of the draw the HD art of that
+// sprite, glyph or image is rendered into the HD surface, blended at its edges over what was
+// already there and spilling a soft fringe past the original outline.
+//
+// Each HD block remembers the page value it was made for. Pixels written by code without
+// hooks (fills, lines, video, effects) no longer match; publishing a frame replaces those
+// blocks with the original pixel enlarged, so unhooked drawing shows as plain 4x scaling and
+// never as stale or wrong art.
+//
+// HD pixels are either palette based (foreground index, background index and coverage,
+// coloured with the live palette when presented, so fades and palette cycling keep working)
+// or literal RGB (shading, glass tints), which follow screen fades by a factor derived from the
+// palette.
 //
 // HD art is read from the VFS under hd/<LBX>/<EEE>/ (sprite.json plus one PNG per frame,
 // grey = palette index, alpha = coverage), normally supplied by a mod package's data/ tree.
-// Indices are looked up in the live palette, so fades and palette cycling keep working.
 namespace hd_sprites {
 
 #define HD_SPRITES_SCALE 4
@@ -33,12 +40,12 @@ namespace hd_sprites {
     // Called for every LBX entry loaded into memory.
     void Register_Load(const void* data, int32_t size, const char* lbx_name, int32_t entry);
 
-    // Brackets one sprite draw; blitters stamp ownership for the current draw in between.
+    // Brackets one sprite draw; blitters stamp the pixels they write in between.
     void Begin_Draw(const s_animation_header* anim, int16_t x, int16_t y);
     void End_Draw();
 
-    // Like Begin_Draw for animate::Remap_Draw: pixels go through `remap` (256 entries), which
-    // is snapshotted so HD art is recoloured the same way.
+    // Like Begin_Draw for animate::Remap_Draw: pixels go through `remap` (256 entries), and the
+    // HD art is recoloured the same way.
     void Begin_Remap_Draw(const s_animation_header* anim, int16_t x, int16_t y, const uint8_t* remap);
 
     // Like Begin_Remap_Draw for draws shaded by a per-pixel mask (anim->width x height levels;
@@ -49,78 +56,51 @@ namespace hd_sprites {
     // top-left of the glyph; colors are the 8 style colours the glyph's roles map to.
     void Begin_Glyph(const char* font_file, int16_t font_index, uint8_t code, int16_t x, int16_t y, const uint8_t* colors);
 
-    // Off-screen images (bitmap-mode animations built with bitmap::*) carry their own owner
-    // layer, so sprites and text composed into them keep their HD art when the image is
-    // later drawn to the screen.
+    // Brackets a draw of a known LBX entry that was not loaded through farload (streamed file
+    // animations): frame `frame` drawn with its top-left at (x, y).
+    void Begin_Asset_Draw(const char* lbx_name, int32_t entry, int16_t frame, int16_t x, int16_t y);
+
+    // Off-screen images (bitmap-mode animations built with bitmap::*) get their own HD surface
+    // once something with HD art is drawn into them.
     void Bitmap_Reset(const void* bitmap, int32_t width, int32_t height);
     // Source `src` drawn with its top-left at (x, y) of `target_bitmap`.
     void Begin_Draw_To_Bitmap(const s_animation_header* src, int16_t x, int16_t y, const void* target_bitmap);
     // Pixel `index` of `bitmap` was written with `value` by the current draw.
     void Stamp_Bitmap(const void* bitmap, int32_t index, uint8_t value);
-    // Same-size copy of src's owner layer to dst (bitmap::Copy_Bitmap_To_Bitmap etc.).
+    // Same-size copy of src's HD surface to dst (bitmap::Copy_Bitmap_To_Bitmap etc.).
     void Bitmap_Copy(const void* dst, const void* src);
-    // Owner layer of a rectangle of the current page captured into `bitmap`.
+    // A rectangle of the current page captured into `bitmap`.
     void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height);
 
-    // A glass pixel was written at `dst`: the page held `background_value` before the glass
-    // remap replaced it. The owner of what was underneath is kept so the compositor can tint
-    // the HD art below in true colour.
-    void Stamp_Glass(const uint8_t* dst, uint8_t background_value);
-
-    // Brackets a draw of a known LBX entry that was not loaded through farload (streamed file
-    // animations): frame `frame` drawn with its top-left at (x, y).
-    void Begin_Asset_Draw(const char* lbx_name, int32_t entry, int16_t frame, int16_t x, int16_t y);
+    // Records that `count` pixels at `dst` (inside the current video page) were written.
+    void Stamp_Run(const uint8_t* dst, int32_t count);
 
     // Like Stamp_Run, for pixels written to an explicit page (draws that write the back page
     // directly) instead of the current video page.
     void Stamp_Page(const uint8_t* page, const uint8_t* dst, int32_t count);
 
-    // Owner records follow a partial page copy (count bytes at byte offset `offset`).
-    void Copy_Plane_Span(const uint8_t* src_page, const uint8_t* dst_page, int32_t offset, int32_t count);
+    // A glass pixel of level `level` (0-15) was written at `dst`: the page held
+    // `background_value` before the glass remap replaced it. The HD pixels underneath are
+    // tinted in true colour.
+    void Stamp_Glass(const uint8_t* dst, uint8_t background_value, int32_t level);
 
-    // Records that `count` pixels at `dst` (inside the current video page) were written.
-    void Stamp_Run(const uint8_t* dst, int32_t count);
-
-    // Page plumbing: owner planes follow page allocation, copies and publishing.
+    // Page plumbing: HD surfaces follow page allocation, copies and publishing.
     void Allocate_Planes(int32_t width, int32_t height);
     void Free_Planes();
     void Copy_Plane(const uint8_t* src_page, const uint8_t* dst_page);
+    // Partial page copy (count bytes at byte offset `offset`).
+    void Copy_Plane_Span(const uint8_t* src_page, const uint8_t* dst_page, int32_t offset, int32_t count);
+    // Game thread, with the off page being published: settles unhooked writes and copies the
+    // changed rows to the published surface.
     void Publish_Plane(const uint8_t* published_page_pixels);
 
-    // A rectangle in source (640x480) pixels.
-    struct s_rect {
-        int32_t x;
-        int32_t y;
-        int32_t width;
-        int32_t height;
-    };
-
-    struct s_compose_input {
-        const uint8_t* page;                   // published 8-bit page
-        const video::s_palette_color* palette; // palette submitted with the page
-        const uint32_t* base;                  // scaler output, ARGB8888
-        int32_t base_stride;                   // in pixels
-        int32_t base_factor;                   // scaler factor (1-4)
-        int32_t width;                         // source page size
-        int32_t height;
-        int32_t cursor_x; // source-space cursor rectangle to keep, or -1
-        int32_t cursor_y;
-        int32_t cursor_size;
-        const s_rect* rects; // areas to recompose, or nullptr for the whole frame
-        int32_t rect_count;
-    };
-
-    // Presenter side: copies the published owners for compositing. Call it together with the
+    // Presenter side: copies the published HD rows for presenting. Call it together with the
     // copy of the published page, while the game thread cannot publish a newer frame.
     void Snapshot_Plane();
 
-    // Appends the areas whose owners changed since the last call (HD art can change where the
-    // 8-bit colours did not). Returns true when everything must be recomposed.
-    bool Take_Owner_Changes(std::vector<s_rect>* rects);
-
-    // Writes the 4x composited frame (width*4 x height*4 ARGB8888) to `output`, limited to
-    // input->rects when given (output outside them is left untouched).
-    // Returns the number of source pixels replaced with HD art.
-    int32_t Compose(const s_compose_input* input, uint32_t* output);
+    // Writes the presented HD frame (width*4 x height*4 ARGB8888) to `output`, only the rows
+    // that changed since the last call unless the palette changed. Returns false when nothing
+    // changed; otherwise [row_first, row_last) are the changed output rows.
+    bool Resolve(const video::s_palette_color* palette, uint32_t* output, int32_t* row_first, int32_t* row_last);
 
 } // namespace hd_sprites

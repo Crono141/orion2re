@@ -11,13 +11,9 @@
 
 namespace hd_sprites {
 
-#define HD_COMMAND_BITS 20
-#define HD_COMMAND_COUNT (1u << HD_COMMAND_BITS)
 #define HD_MAX_ASSETS 16384
 #define HD_GLASS_FIRST 0xF0
 #define HD_MAX_GLYPH_FONTS 64
-#define HD_REMAP_TABLES 4096
-#define HD_SHADE_MASKS 1024
 
     namespace {
 
@@ -56,23 +52,6 @@ namespace hd_sprites {
             int32_t size;
         };
 
-        enum e_command_kind : uint8_t {
-            COMMAND_SPRITE = 0,
-            COMMAND_GLYPH = 1,
-        };
-
-        struct s_command {
-            int32_t asset; // sprite asset, or glyph font slot
-            int16_t frame; // sprite frame, or character code
-            int16_t x;
-            int16_t y;
-            e_command_kind kind;
-            uint8_t glassed;   // sprite was drawn with the glass flag (it can be set at runtime)
-            uint16_t remap;    // remap table, 0 = none
-            uint8_t colors[8]; // glyph role -> palette index
-            uint16_t shade;    // shade mask, 0 = none
-        };
-
         // HD glyphs for one font size of one font file: hd/<FILE>/<font>/<code>.png, LA with
         // L = colour role (1..8) and A = coverage, at HD_SPRITES_SCALE x the glyph cell.
         struct s_hd_glyph_font {
@@ -85,64 +64,32 @@ namespace hd_sprites {
         bool initialized;
         bool enabled;
 
-        uint32_t* plane_off;
-        uint32_t* plane_back;
-        uint32_t* plane_published;
-        // What lay under glass pixels: (command << 8) | value written before the glass remap.
-        uint32_t* under_off;
-        uint32_t* under_back;
-        uint32_t* under_published;
-        // Glass colours (8-bit RGB, intensity 0-100) snapshotted with the published page.
-        struct s_glass {
-            uint8_t intensity;
-            uint8_t r;
-            uint8_t g;
-            uint8_t b;
-        };
-        s_glass glass_published[16];
-        // Presenter-owned copies, taken while the game thread cannot publish (Snapshot_Plane),
-        // so the owners always belong to the same frame as the presented page.
-        uint32_t* plane_present;
-        uint32_t* under_present;
-        s_glass glass_present[16];
-        // Areas whose owners changed since the last Take_Owner_Changes, and whether everything did.
-        std::vector<s_rect> owner_changes;
-        bool owner_changes_full = true;
-        int32_t plane_width;
-        int32_t plane_height;
-
-        // Written by the game thread, read by the presenter. A slot reused before a frame that
-        // references it is presented only matters if the recorded pixel value also matches.
-        s_command commands[HD_COMMAND_COUNT];
-        uint32_t next_command = 1;
-        uint32_t current_command;
-
-        // Owner layers of off-screen images, keyed by the image header. Values have the same
-        // meaning as page owners, with command positions in the image's own coordinates.
-        struct s_bitmap_plane {
-            int32_t width;
-            int32_t height;
-            std::vector<uint32_t> owners;
-        };
-        std::unordered_map<const void*, s_bitmap_plane> bitmap_planes;
-
-        // When the current draw's source is an image with an owner layer, each written pixel
-        // takes its owner from that layer, re-based to where the image is being drawn.
-        const s_bitmap_plane* source_plane;
-        int32_t source_origin_x;
-        int32_t source_origin_y;
-        std::unordered_map<uint32_t, uint32_t> translated;
-
-        // Assets are appended and never moved or freed, so the presenter can read them while
-        // the game thread registers new ones.
+        // Assets are appended and never moved or freed.
         s_hd_asset* assets[HD_MAX_ASSETS];
         int32_t asset_count;
         std::unordered_map<std::string, int32_t> asset_by_key;
         std::unordered_map<const void*, s_registration> registrations;
 
+        s_hd_glyph_font* glyph_fonts[HD_MAX_GLYPH_FONTS];
+        int32_t glyph_font_count;
+        std::unordered_map<std::string, int32_t> glyph_font_by_key;
+
         // ORION2RE_HD_STATS: count draws that had no HD art, by asset, and log them
         // periodically. Debug aid for finding coverage gaps.
         bool stats_enabled;
+        std::unordered_map<const void*, std::string> stats_names;
+        std::unordered_map<std::string, uint32_t> stats_missing;
+        uint32_t stats_draws;
+        uint32_t stats_interval = 20000;
+        uint32_t stats_glyph_missing_art;
+        uint32_t stats_publishes;
+        uint32_t stats_settled_pixels;
+        // ORION2RE_HD_DEBUG=sd: tint blocks that fell back to the enlarged original because
+        // unhooked code changed the page pixel.
+        bool debug_sd;
+        // ORION2RE_HD_PROBE=x,y: log every HD write to that page pixel (debug aid).
+        int32_t probe_x = -1;
+        int32_t probe_y = -1;
 
         // ORION2RE_HD_CAPTURE=<dir>: write the live palette the first time each LBX sprite is
         // drawn under it, as <dir>/<LBX>_<EEE>_<hash>.pal (256 x RGB, 8-bit). The HD pipeline uses
@@ -176,39 +123,6 @@ namespace hd_sprites {
                 SDL_CloseIO(out);
             }
         }
-        std::unordered_map<const void*, std::string> stats_names;
-        std::unordered_map<std::string, uint32_t> stats_missing;
-        uint32_t stats_draws;
-        uint32_t stats_interval = 20000;
-        uint32_t stats_glyph_commands;
-        uint32_t stats_glyph_missing_art;
-        uint32_t stats_compose_calls;
-        bool debug_stale;
-        // ORION2RE_HD_PROBE=x,y: log every owner write to that page pixel (debug aid).
-        int32_t probe_x = -1;
-        int32_t probe_y = -1;
-
-        void Probe_Write(int32_t x, int32_t y, uint32_t owner, uint8_t value, const char* where) {
-            if (x != probe_x || y != probe_y) {
-                return;
-            }
-            const s_command& c = commands[owner >> 8];
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "hd probe (%d,%d) %s: value=%u owner=%u kind=%d asset=%d (%s) frame=%d at %d,%d current_command=%u plane=%d",
-                x,
-                y,
-                where,
-                value,
-                owner >> 8,
-                owner ? c.kind : -1,
-                owner ? c.asset : -1,
-                owner && c.kind == COMMAND_SPRITE && c.asset >= 0 && c.asset < asset_count ? assets[c.asset]->directory.c_str() : "-",
-                owner ? c.frame : -1,
-                owner ? c.x : 0,
-                owner ? c.y : 0,
-                current_command,
-                source_plane != nullptr);
-        }
 
         void Stats_Missing(const std::string& key) {
             stats_missing[key]++;
@@ -225,52 +139,6 @@ namespace hd_sprites {
                 line += " " + top[i].second + "=" + std::to_string(top[i].first);
             }
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: draws without HD art:%s", line.c_str());
-        }
-
-        s_hd_glyph_font* glyph_fonts[HD_MAX_GLYPH_FONTS];
-        int32_t glyph_font_count;
-        std::unordered_map<std::string, int32_t> glyph_font_by_key;
-
-        // Snapshots of remap tables used by Remap_Draw, in a ring (slot 0 unused).
-        uint8_t remap_tables[HD_REMAP_TABLES][256];
-        uint32_t next_remap_table = 1;
-
-        // Per-pixel brightness (percent) of masked draws (shaded planets), in a ring (slot 0
-        // unused) interned by content.
-        struct s_shade_mask {
-            int32_t width;
-            int32_t height;
-            std::vector<uint8_t> brightness;
-        };
-        s_shade_mask shade_masks[HD_SHADE_MASKS];
-        std::string shade_mask_keys[HD_SHADE_MASKS];
-        std::unordered_map<std::string, uint32_t> shade_mask_ids;
-        uint32_t next_shade_mask = 1;
-
-        uint32_t* Under_Plane_For(const uint8_t* page) {
-            if (page == nullptr) {
-                return nullptr;
-            }
-            if (page == video::g_page_off.pixels) {
-                return under_off;
-            }
-            if (page == video::g_page_back.pixels) {
-                return under_back;
-            }
-            return nullptr;
-        }
-
-        uint32_t* Owner_Plane_For(const uint8_t* page) {
-            if (page == nullptr) {
-                return nullptr;
-            }
-            if (page == video::g_page_off.pixels) {
-                return plane_off;
-            }
-            if (page == video::g_page_back.pixels) {
-                return plane_back;
-            }
-            return nullptr;
         }
 
         bool Read_Vfs_File(const char* path, std::vector<uint8_t>* bytes) {
@@ -480,112 +348,457 @@ namespace hd_sprites {
             return font->state[code] == 1 ? &font->glyphs[code] : nullptr;
         }
 
-        // Commands are interned: screens redraw the same things every frame, and giving each
-        // redraw a new slot would wrap the ring within minutes, recycling slots that long-lived
-        // owners (a border drawn once into the back page) still point at.
-        std::unordered_map<std::string, uint32_t> command_ids;
-        std::string command_keys[HD_COMMAND_COUNT];
+        // ------------------------------------------------------------------ HD pixels
+        //
+        // Palette form: foreground index (bits 0-7) over background index (bits 8-15) with
+        // coverage (bits 16-23); HD_CLEAR marks a transparent background (inside images).
+        // Literal form: HD_LITERAL | RGB.
 
-        std::string Command_Key(const s_command& command) {
-            char key[24];
-            memcpy(key + 0, &command.asset, 4);
-            memcpy(key + 4, &command.frame, 2);
-            memcpy(key + 6, &command.x, 2);
-            memcpy(key + 8, &command.y, 2);
-            key[10] = (char)command.kind;
-            key[11] = (char)command.glassed;
-            memcpy(key + 12, &command.remap, 2);
-            memcpy(key + 14, command.colors, 8);
-            memcpy(key + 22, &command.shade, 2);
-            return std::string(key, sizeof(key));
+        constexpr int32_t S = HD_SPRITES_SCALE;
+        constexpr uint32_t HD_LITERAL = 0x80000000u;
+        constexpr uint32_t HD_CLEAR = 0x01000000u;
+        constexpr uint16_t SHADOW_NONE = 0x100;
+
+        inline uint32_t Indexed(uint8_t index) {
+            return index | (255u << 16);
         }
 
-        uint32_t Alloc_Command(const s_command& command) {
-            std::string key = Command_Key(command);
-            const auto found = command_ids.find(key);
-            if (found != command_ids.end()) {
-                return found->second;
-            }
-            uint32_t id = next_command++ & (HD_COMMAND_COUNT - 1);
-            if (id == 0) {
-                id = next_command++ & (HD_COMMAND_COUNT - 1);
-            }
-            if (!command_keys[id].empty()) {
-                command_ids.erase(command_keys[id]);
-            }
-            commands[id] = command;
-            command_ids.emplace(key, id);
-            command_keys[id] = std::move(key);
-            return id;
+        inline uint32_t Literal(uint32_t rgb) {
+            return HD_LITERAL | (rgb & 0xFFFFFFu);
         }
 
-        // A copy of command `id` moved by the current source origin.
-        uint32_t Translate(uint32_t id) {
-            const auto found = translated.find(id);
-            if (found != translated.end()) {
-                return found->second;
-            }
-            s_command moved = commands[id];
-            moved.x = (int16_t)(moved.x + source_origin_x);
-            moved.y = (int16_t)(moved.y + source_origin_y);
-            const uint32_t new_id = Alloc_Command(moved);
-            translated.emplace(id, new_id);
-            return new_id;
+        inline uint32_t Mix(uint32_t over, uint32_t under, uint32_t alpha) {
+            const uint32_t inv = 255u - alpha;
+            const uint32_t r = (((over >> 16) & 0xFF) * alpha + ((under >> 16) & 0xFF) * inv) / 255u;
+            const uint32_t g = (((over >> 8) & 0xFF) * alpha + ((under >> 8) & 0xFF) * inv) / 255u;
+            const uint32_t b = ((over & 0xFF) * alpha + (under & 0xFF) * inv) / 255u;
+            return (r << 16) | (g << 8) | b;
         }
 
-        void Clear_Draw_State() {
-            current_command = 0;
-            source_plane = nullptr;
-            translated.clear();
+        // Colour of a palette index in the screen's palette before fading (6-bit VGA values).
+        inline uint32_t Base_Rgb(uint8_t index) {
+            const s_palette_entry& entry = video::current_palette[index];
+            return ((uint32_t)((entry.r & 0x3F) * 255 / 63) << 16) | ((uint32_t)((entry.g & 0x3F) * 255 / 63) << 8) |
+                (uint32_t)((entry.b & 0x3F) * 255 / 63);
         }
 
-        // Owner for a pixel at target coordinates (x, y) written with `value`.
-        uint32_t Owner_For(int32_t x, int32_t y, uint8_t value) {
-            if (current_command != 0) {
-                return (current_command << 8) | value;
+        uint32_t Base_Color(uint32_t pixel) {
+            if ((pixel & HD_LITERAL) != 0) {
+                return pixel & 0xFFFFFFu;
             }
-            if (source_plane == nullptr) {
-                return 0;
+            const uint32_t alpha = (pixel >> 16) & 0xFF;
+            const uint32_t fg = Base_Rgb((uint8_t)pixel);
+            if (alpha >= 255) {
+                return fg;
             }
-            const int32_t sx = x - source_origin_x;
-            const int32_t sy = y - source_origin_y;
-            if (sx < 0 || sy < 0 || sx >= source_plane->width || sy >= source_plane->height) {
-                return 0;
+            const uint32_t bg = (pixel & HD_CLEAR) != 0 ? 0u : Base_Rgb((uint8_t)(pixel >> 8));
+            return Mix(fg, bg, alpha);
+        }
+
+        // Palette index `index` with coverage `alpha` over `dest`.
+        uint32_t Over_Index(uint32_t dest, uint8_t index, uint32_t alpha) {
+            if (alpha >= 255) {
+                return Indexed(index);
             }
-            const uint32_t owner = source_plane->owners[(size_t)sy * source_plane->width + sx];
-            if (owner == 0 || (owner & 0xFF) != value) {
-                return 0;
+            if ((dest & HD_LITERAL) != 0) {
+                return Literal(Mix(Base_Rgb(index), dest, alpha));
             }
-            return (Translate(owner >> 8) << 8) | value;
+            // One level of blending is kept: the destination's dominant colour becomes the
+            // background, or its own background when it is mostly uncovered.
+            if (((dest >> 16) & 0xFF) >= 128) {
+                return index | ((dest & 0xFF) << 8) | (alpha << 16);
+            }
+            return index | (dest & 0xFF00u) | (alpha << 16) | (dest & HD_CLEAR);
+        }
+
+        uint32_t Over_Rgb(uint32_t dest, uint32_t rgb, uint32_t alpha) {
+            if (alpha >= 255) {
+                return Literal(rgb);
+            }
+            return Literal(Mix(rgb, Base_Color(dest), alpha));
+        }
+
+        // Glass of level `level` with coverage `alpha` over `dest`, tinted in true colour.
+        uint32_t Glass_Tint(uint32_t dest, int32_t level, uint32_t alpha) {
+            const auto& glass = video::glass_colors[level & 15];
+            const uint32_t under = Base_Color(dest);
+            uint32_t tinted = under;
+            if (glass.intensity != 0) {
+                const uint32_t tint = ((uint32_t)((glass.r & 0x3F) * 255 / 63) << 16) |
+                    ((uint32_t)((glass.g & 0x3F) * 255 / 63) << 8) | (uint32_t)((glass.b & 0x3F) * 255 / 63);
+                tinted = Mix(tint, under, glass.intensity >= 100 ? 255u : (uint32_t)glass.intensity * 255u / 100u);
+            }
+            return Literal(alpha >= 255 ? tinted : Mix(tinted, under, alpha));
+        }
+
+        // --------------------------------------------------------------- HD surfaces
+
+        struct s_surface {
+            int32_t width = 0; // in page pixels
+            int32_t height = 0;
+            std::vector<uint32_t> hd;       // (width * S) x (height * S); empty: no HD (images)
+            std::vector<uint16_t> shadow;   // page value each block was made for
+            std::vector<uint32_t> mark;     // draw that last stamped each pixel
+            std::vector<uint8_t> row_dirty; // pages: rows changed since last copied onward
+        };
+
+        s_surface page_off;
+        s_surface page_back;
+        s_surface page_published;
+        s_surface page_present;
+        // Factor (0-256) applied to literal pixels so they follow palette fades.
+        uint32_t published_fade = 256;
+        uint32_t present_fade = 256;
+        // Off-screen images keyed by their header. Nodes stay put, so pointers remain valid.
+        std::unordered_map<const void*, s_surface> images;
+
+        void Ensure_Hd(s_surface& surface) {
+            if (!surface.hd.empty() || surface.width <= 0 || surface.height <= 0) {
+                return;
+            }
+            const size_t count = (size_t)surface.width * (size_t)surface.height;
+            surface.hd.assign(count * S * S, HD_CLEAR);
+            surface.shadow.assign(count, SHADOW_NONE);
+            surface.mark.assign(count, 0u);
+        }
+
+        void Allocate_Page(s_surface& surface, int32_t width, int32_t height) {
+            surface.width = width;
+            surface.height = height;
+            surface.hd.assign((size_t)width * height * S * S, Indexed(0));
+            surface.shadow.assign((size_t)width * height, SHADOW_NONE);
+            surface.mark.assign((size_t)width * height, 0u);
+            surface.row_dirty.assign((size_t)height, 1);
+        }
+
+        void Free_Surface(s_surface& surface) {
+            surface = s_surface();
+        }
+
+        inline uint32_t* Block(s_surface& surface, int32_t x, int32_t y) {
+            return &surface.hd[(size_t)y * S * surface.width * S + (size_t)x * S];
+        }
+
+        inline void Mark_Row(s_surface& surface, int32_t y) {
+            if (!surface.row_dirty.empty()) {
+                surface.row_dirty[(size_t)y] = 1;
+            }
+        }
+
+        void Fill_Block(s_surface& surface, int32_t x, int32_t y, uint32_t pixel) {
+            uint32_t* block = Block(surface, x, y);
+            const size_t stride = (size_t)surface.width * S;
+            for (int32_t sy = 0; sy < S; ++sy) {
+                for (int32_t sx = 0; sx < S; ++sx) {
+                    block[sy * stride + sx] = pixel;
+                }
+            }
+            Mark_Row(surface, y);
+        }
+
+        s_surface* Page_Surface(const uint8_t* page) {
+            if (page == nullptr || page_off.hd.empty()) {
+                return nullptr;
+            }
+            if (page == video::g_page_off.pixels) {
+                return &page_off;
+            }
+            if (page == video::g_page_back.pixels) {
+                return &page_back;
+            }
+            return nullptr;
+        }
+
+        // ------------------------------------------------------------- current draw
+
+        enum e_source {
+            SOURCE_NONE,  // no HD art: written pixels show the original enlarged
+            SOURCE_ART,   // a sprite, glyph or file animation frame with HD art
+            SOURCE_IMAGE, // an off-screen image with an HD surface
+        };
+
+        struct s_draw {
+            e_source source = SOURCE_NONE;
+            const s_hd_frame* frame = nullptr;
+            bool glyph = false;
+            bool glassed = false;
+            int32_t x = 0; // where the sprite's top-left lands in the target
+            int32_t y = 0;
+            bool remapped = false;
+            uint8_t remap[256];
+            uint8_t colors[8];
+            std::vector<uint8_t> shade; // brightness percent per sprite pixel, empty = none
+            int32_t shade_width = 0;
+            int32_t shade_height = 0;
+            const s_surface* image = nullptr;
+            int32_t image_x = 0;
+            int32_t image_y = 0;
+            std::string name; // for the probe
+        };
+
+        struct s_stamp {
+            s_surface* target;
+            int32_t offset;
+            uint8_t value;
+            int8_t level; // glass level, -1 for a plain pixel
+        };
+
+        s_draw draw;
+        uint32_t generation = 1;
+        // Art draws are rendered when the draw ends, once every written pixel is known.
+        std::vector<s_stamp> pending;
+
+        void Probe(const s_surface& target, int32_t offset, uint8_t value, const char* what) {
+            if (probe_x < 0 || target.width <= 0 || offset % target.width != probe_x || offset / target.width != probe_y) {
+                return;
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd probe (%d,%d) %s: value=%u source=%d (%s) at %d,%d %s", probe_x, probe_y, what, value, (int)draw.source, draw.name.c_str(), draw.x, draw.y, &target == &page_off ? "off" : &target == &page_back ? "back"
+                                                                                                                                                                                                                                                           : "image");
+        }
+
+        // Darkens `rgb` by the shade mask sampled bilinearly at sub-pixel (sx, sy) of sprite pixel
+        // (px, py), which turns the stepped 1x shadow edge into a smooth gradient.
+        uint32_t Shade(uint32_t rgb, int32_t px, int32_t py, int32_t sx, int32_t sy) {
+            const int32_t width = draw.shade_width;
+            const int32_t height = draw.shade_height;
+            const int32_t fx = SDL_clamp(px * S + sx - S / 2, 0, (width - 1) * S);
+            const int32_t fy = SDL_clamp(py * S + sy - S / 2, 0, (height - 1) * S);
+            const int32_t x0 = fx / S;
+            const int32_t y0 = fy / S;
+            const int32_t x1 = SDL_min(x0 + 1, width - 1);
+            const int32_t y1 = SDL_min(y0 + 1, height - 1);
+            const int32_t wx = fx - x0 * S;
+            const int32_t wy = fy - y0 * S;
+            const uint8_t* b = draw.shade.data();
+            const int32_t top = b[y0 * width + x0] * (S - wx) + b[y0 * width + x1] * wx;
+            const int32_t bottom = b[y1 * width + x0] * (S - wx) + b[y1 * width + x1] * wx;
+            const uint32_t percent = (uint32_t)((top * (S - wy) + bottom * wy) / (S * S));
+            if (percent >= 100) {
+                return rgb;
+            }
+            return ((((rgb >> 16) & 0xFF) * percent / 100u) << 16) | ((((rgb >> 8) & 0xFF) * percent / 100u) << 8) |
+                ((rgb & 0xFF) * percent / 100u);
+        }
+
+        // The current draw's HD art at sub-pixel (sx, sy) of target pixel (x, y), over `dest`.
+        uint32_t Apply_Art(uint32_t dest, int32_t x, int32_t y, int32_t sx, int32_t sy) {
+            const s_hd_frame* frame = draw.frame;
+            const int32_t lx = (x - draw.x - frame->origin_x) * S + sx;
+            const int32_t ly = (y - draw.y - frame->origin_y) * S + sy;
+            if (lx < 0 || ly < 0 || lx >= frame->width || ly >= frame->height) {
+                return dest;
+            }
+            const size_t i = (size_t)ly * frame->width + lx;
+            const uint32_t alpha = frame->alpha[i];
+            if (alpha == 0) {
+                return dest;
+            }
+            uint8_t index = frame->index[i];
+            if (draw.glyph) {
+                // Glyph art stores colour roles; the style supplies the indices.
+                if (index < 1 || index > 8) {
+                    return dest;
+                }
+                return Over_Index(dest, draw.colors[index - 1], alpha);
+            }
+            if (draw.glassed && index >= HD_GLASS_FIRST) {
+                return Glass_Tint(dest, index - HD_GLASS_FIRST, alpha);
+            }
+            if (draw.remapped) {
+                index = draw.remap[index];
+            }
+            if (!draw.shade.empty()) {
+                return Over_Rgb(dest, Shade(Base_Rgb(index), x - draw.x, y - draw.y, sx, sy), alpha);
+            }
+            return Over_Index(dest, index, alpha);
+        }
+
+        void Apply_Art_Block(s_surface& target, int32_t x, int32_t y) {
+            uint32_t* block = Block(target, x, y);
+            const size_t stride = (size_t)target.width * S;
+            for (int32_t sy = 0; sy < S; ++sy) {
+                for (int32_t sx = 0; sx < S; ++sx) {
+                    block[sy * stride + sx] = Apply_Art(block[sy * stride + sx], x, y, sx, sy);
+                }
+            }
+            Mark_Row(target, y);
+        }
+
+        // A pixel written by a draw without HD art (or an image draw), rendered right away.
+        void Render_Now(s_surface& target, int32_t offset, uint8_t value, int32_t level) {
+            if (target.hd.empty()) {
+                return;
+            }
+            const int32_t x = offset % target.width;
+            const int32_t y = offset / target.width;
+            target.shadow[(size_t)offset] = value;
+            if (level >= 0) {
+                // Glass over whatever HD pixels are underneath.
+                uint32_t* block = Block(target, x, y);
+                const size_t stride = (size_t)target.width * S;
+                for (int32_t sy = 0; sy < S; ++sy) {
+                    for (int32_t sx = 0; sx < S; ++sx) {
+                        block[sy * stride + sx] = Glass_Tint(block[sy * stride + sx], level, 255u);
+                    }
+                }
+                Mark_Row(target, y);
+                return;
+            }
+            if (draw.source == SOURCE_IMAGE) {
+                const s_surface& image = *draw.image;
+                const int32_t ix = x - draw.image_x;
+                const int32_t iy = y - draw.image_y;
+                if (!image.hd.empty() && ix >= 0 && iy >= 0 && ix < image.width && iy < image.height &&
+                    image.shadow[(size_t)iy * image.width + ix] == value) {
+                    const uint32_t* src = &image.hd[(size_t)iy * S * image.width * S + (size_t)ix * S];
+                    const size_t src_stride = (size_t)image.width * S;
+                    uint32_t* block = Block(target, x, y);
+                    const size_t stride = (size_t)target.width * S;
+                    for (int32_t sy = 0; sy < S; ++sy) {
+                        for (int32_t sx = 0; sx < S; ++sx) {
+                            const uint32_t pixel = src[sy * src_stride + sx];
+                            uint32_t& out = block[sy * stride + sx];
+                            if ((pixel & HD_CLEAR) != 0 && (pixel & HD_LITERAL) == 0) {
+                                // Partly covered over the image's transparent background.
+                                if (((pixel >> 16) & 0xFF) != 0) {
+                                    out = Over_Index(out, (uint8_t)pixel, (pixel >> 16) & 0xFF);
+                                }
+                            } else {
+                                out = pixel;
+                            }
+                        }
+                    }
+                    Mark_Row(target, y);
+                    return;
+                }
+            }
+            Fill_Block(target, x, y, Indexed(value));
+        }
+
+        bool Marked(const s_surface& target, int32_t x, int32_t y) {
+            return x >= 0 && y >= 0 && x < target.width && y < target.height &&
+                target.mark[(size_t)y * target.width + x] == generation;
+        }
+
+        // Renders the pending stamps of an art draw into one target.
+        void Render_Pending_Target(s_surface& target) {
+            int32_t x0 = target.width;
+            int32_t y0 = target.height;
+            int32_t x1 = -1;
+            int32_t y1 = -1;
+            for (const s_stamp& stamp : pending) {
+                if (stamp.target != &target) {
+                    continue;
+                }
+                const int32_t x = stamp.offset % target.width;
+                const int32_t y = stamp.offset / target.width;
+                x0 = SDL_min(x0, x);
+                y0 = SDL_min(y0, y);
+                x1 = SDL_max(x1, x);
+                y1 = SDL_max(y1, y);
+                // Inside the sprite the art goes over the original pixel; at its edges over the
+                // HD pixels already there, so the art's own soft outline shows.
+                const bool interior = stamp.level < 0 && Marked(target, x - 1, y) && Marked(target, x + 1, y) &&
+                    Marked(target, x, y - 1) && Marked(target, x, y + 1);
+                if (interior) {
+                    Fill_Block(target, x, y, Indexed(stamp.value));
+                }
+                Apply_Art_Block(target, x, y);
+                target.shadow[(size_t)stamp.offset] = stamp.value;
+            }
+            if (x1 < 0 || target.row_dirty.empty()) {
+                return; // images get no fringe: their transparent pixels are never drawn
+            }
+            // Fringe: the art's soft edge past the original outline, over unwritten neighbours.
+            int32_t clip_x1 = 0;
+            int32_t clip_y1 = 0;
+            int32_t clip_x2 = target.width - 1;
+            int32_t clip_y2 = target.height - 1;
+            if (animate::clipping_flag == 1) {
+                clip_x1 = SDL_max(clip_x1, (int32_t)video::screen_window_x1);
+                clip_y1 = SDL_max(clip_y1, (int32_t)video::screen_window_y1);
+                clip_x2 = SDL_min(clip_x2, (int32_t)video::screen_window_x2);
+                clip_y2 = SDL_min(clip_y2, (int32_t)video::screen_window_y2);
+            }
+            for (int32_t y = SDL_max(y0 - 1, clip_y1); y <= SDL_min(y1 + 1, clip_y2); ++y) {
+                for (int32_t x = SDL_max(x0 - 1, clip_x1); x <= SDL_min(x1 + 1, clip_x2); ++x) {
+                    if (Marked(target, x, y)) {
+                        continue;
+                    }
+                    if (Marked(target, x - 1, y) || Marked(target, x + 1, y) || Marked(target, x, y - 1) ||
+                        Marked(target, x, y + 1)) {
+                        Apply_Art_Block(target, x, y);
+                    }
+                }
+            }
+        }
+
+        void Flush_Pending() {
+            while (!pending.empty()) {
+                s_surface* target = pending.front().target;
+                Render_Pending_Target(*target);
+                pending.erase(std::remove_if(pending.begin(), pending.end(), [target](const s_stamp& stamp) { return stamp.target == target; }),
+                    pending.end());
+            }
+        }
+
+        void Start_Draw() {
+            Flush_Pending();
+            draw.source = SOURCE_NONE;
+            draw.frame = nullptr;
+            draw.glyph = false;
+            draw.glassed = false;
+            draw.remapped = false;
+            draw.shade.clear();
+            draw.image = nullptr;
+            draw.name.clear();
+            if (++generation == 0) {
+                generation = 1;
+            }
+        }
+
+        void Stamp(s_surface& target, int32_t offset, uint8_t value, int32_t level) {
+            if (probe_x >= 0) {
+                Probe(target, offset, value, "stamp");
+            }
+            if (draw.source == SOURCE_ART) {
+                Ensure_Hd(target);
+                target.mark[(size_t)offset] = generation;
+                pending.push_back({&target, offset, value, (int8_t)level});
+                return;
+            }
+            Render_Now(target, offset, value, level);
         }
 
         // Sets up the current draw for `anim` drawn with its top-left at (x, y).
         void Begin_Source(const s_animation_header* anim, int16_t x, int16_t y) {
-            Clear_Draw_State();
+            Start_Draw();
             if (!enabled || anim == nullptr) {
                 return;
             }
-            if (!capture_dir.empty()) {
+            if (!capture_dir.empty() || probe_x >= 0 || stats_enabled) {
                 const auto name = stats_names.find(anim);
                 if (name != stats_names.end()) {
-                    Capture_Palette(name->second);
+                    draw.name = name->second;
+                    if (!capture_dir.empty()) {
+                        Capture_Palette(name->second);
+                    }
                 }
             }
-            const auto plane = bitmap_planes.find(anim);
-            if (plane != bitmap_planes.end() && plane->second.width == anim->width &&
-                plane->second.height == anim->height) {
-                source_plane = &plane->second;
-                source_origin_x = x;
-                source_origin_y = y;
+            const auto image = images.find(anim);
+            if (image != images.end() && !image->second.hd.empty() && image->second.width == anim->width &&
+                image->second.height == anim->height) {
+                draw.source = SOURCE_IMAGE;
+                draw.image = &image->second;
+                draw.image_x = x;
+                draw.image_y = y;
                 return;
             }
             const auto found = registrations.find(anim);
             if (found == registrations.end()) {
                 if (stats_enabled) {
-                    const auto name = stats_names.find(anim);
-                    Stats_Missing(name != stats_names.end()
-                            ? name->second
-                            : "unregistered:" + std::to_string(anim->width) + "x" + std::to_string(anim->height));
+                    Stats_Missing(!draw.name.empty() ? draw.name
+                                                     : "unregistered:" + std::to_string(anim->width) + "x" + std::to_string(anim->height));
                 }
                 return;
             }
@@ -603,15 +816,19 @@ namespace hd_sprites {
             }
             if (asset->has_source_hash && asset->source_hash != found->second.data_hash) {
                 if (stats_enabled) {
-                    const auto name = stats_names.find(anim);
-                    Stats_Missing("source-mismatch:" + (name != stats_names.end() ? name->second : std::string("?")));
+                    Stats_Missing("source-mismatch:" + draw.name);
                 }
                 return;
             }
-            if (Resolve_Frame(asset, anim->current_frame) == nullptr) {
+            const s_hd_frame* frame = Resolve_Frame(asset, anim->current_frame);
+            if (frame == nullptr) {
                 return;
             }
-            current_command = Alloc_Command({found->second.asset, anim->current_frame, x, y, COMMAND_SPRITE, (uint8_t)((anim->flags & ANIMATION_FLAG_GLASSED) != 0), 0, {}});
+            draw.source = SOURCE_ART;
+            draw.frame = frame;
+            draw.x = x;
+            draw.y = y;
+            draw.glassed = asset->glassed || (anim->flags & ANIMATION_FLAG_GLASSED) != 0;
         }
 
     } // namespace
@@ -625,7 +842,7 @@ namespace hd_sprites {
         const char* stats = SDL_getenv("ORION2RE_HD_STATS");
         stats_enabled = enabled && stats != nullptr;
         const char* debug = SDL_getenv("ORION2RE_HD_DEBUG");
-        debug_stale = enabled && debug != nullptr && strcmp(debug, "stale") == 0;
+        debug_sd = enabled && debug != nullptr && (strcmp(debug, "sd") == 0 || strcmp(debug, "stale") == 0);
         const char* capture = SDL_getenv("ORION2RE_HD_CAPTURE");
         if (capture != nullptr && capture[0] != '\0') {
             capture_dir = capture;
@@ -655,7 +872,7 @@ namespace hd_sprites {
         if (!enabled || data == nullptr || lbx_name == nullptr || size < (int32_t)sizeof(s_registration::header)) {
             return;
         }
-        if (stats_enabled || !capture_dir.empty()) {
+        if (stats_enabled || !capture_dir.empty() || probe_x >= 0) {
             char key[64];
             snprintf(key, sizeof(key), "%s#%03d", lbx_name, (int)entry);
             for (char* c = key; *c != '\0'; ++c) {
@@ -690,62 +907,33 @@ namespace hd_sprites {
 
     void Begin_Remap_Draw(const s_animation_header* anim, int16_t x, int16_t y, const uint8_t* remap) {
         Begin_Source(anim, x, y);
-        if (current_command == 0 || remap == nullptr) {
+        if (remap == nullptr) {
             return;
         }
-        // Reuse the most recent table when it is unchanged (the usual case), so remapped
-        // redraws intern to the same command.
-        uint32_t table = (next_remap_table - 1) % HD_REMAP_TABLES;
-        if (table == 0 || memcmp(remap_tables[table], remap, 256) != 0) {
-            table = next_remap_table++ % HD_REMAP_TABLES;
-            if (table == 0) {
-                table = next_remap_table++ % HD_REMAP_TABLES;
-            }
-            memcpy(remap_tables[table], remap, 256);
+        if (draw.source == SOURCE_IMAGE) {
+            draw.source = SOURCE_NONE; // remapped images keep their original look
+            return;
         }
-        s_command command = commands[current_command];
-        command.remap = (uint16_t)table;
-        current_command = Alloc_Command(command);
+        if (draw.source == SOURCE_ART) {
+            memcpy(draw.remap, remap, sizeof(draw.remap));
+            draw.remapped = true;
+        }
     }
 
     void Begin_Masked_Remap_Draw(const s_animation_header* anim, int16_t x, int16_t y, const uint8_t* remap, const int8_t* mask, const int8_t* gray_percentages, int32_t level_count) {
         Begin_Remap_Draw(anim, x, y, remap);
-        if (current_command == 0 || mask == nullptr || anim == nullptr) {
+        if (draw.source != SOURCE_ART || mask == nullptr || anim == nullptr) {
             return;
         }
-        const int32_t width = anim->width;
-        const int32_t height = anim->height;
-        std::string key((size_t)width * height + 8, '\0');
-        memcpy(&key[0], &width, 4);
-        memcpy(&key[4], &height, 4);
-        for (int32_t i = 0; i < width * height; ++i) {
+        draw.shade_width = anim->width;
+        draw.shade_height = anim->height;
+        draw.shade.resize((size_t)anim->width * anim->height);
+        for (size_t i = 0; i < draw.shade.size(); ++i) {
             const int32_t level = mask[i];
             // Level 0 is drawn unshaded; level n darkens by gray_percentages[n] percent.
             const int32_t percent = level <= 0 || level >= level_count ? 0 : gray_percentages[level];
-            key[8 + (size_t)i] = (char)(uint8_t)SDL_clamp(100 - percent, 0, 100);
+            draw.shade[i] = (uint8_t)SDL_clamp(100 - percent, 0, 100);
         }
-        uint32_t id;
-        const auto found = shade_mask_ids.find(key);
-        if (found != shade_mask_ids.end()) {
-            id = found->second;
-        } else {
-            id = next_shade_mask++ % HD_SHADE_MASKS;
-            if (id == 0) {
-                id = next_shade_mask++ % HD_SHADE_MASKS;
-            }
-            if (!shade_mask_keys[id].empty()) {
-                shade_mask_ids.erase(shade_mask_keys[id]);
-            }
-            s_shade_mask& shade = shade_masks[id];
-            shade.width = width;
-            shade.height = height;
-            shade.brightness.assign((const uint8_t*)key.data() + 8, (const uint8_t*)key.data() + key.size());
-            shade_mask_ids.emplace(key, id);
-            shade_mask_keys[id] = std::move(key);
-        }
-        s_command command = commands[current_command];
-        command.shade = (uint16_t)id;
-        current_command = Alloc_Command(command);
     }
 
     void Begin_Draw_To_Bitmap(const s_animation_header* src, int16_t x, int16_t y, const void* target_bitmap) {
@@ -754,10 +942,10 @@ namespace hd_sprites {
     }
 
     void Begin_Glyph(const char* font_file, int16_t font_index, uint8_t code, int16_t x, int16_t y, const uint8_t* colors) {
-        Clear_Draw_State();
         if (!initialized) {
             Initialize();
         }
+        Start_Draw();
         if (!enabled || font_file == nullptr || colors == nullptr) {
             return;
         }
@@ -781,75 +969,22 @@ namespace hd_sprites {
             }
             return;
         }
-        stats_glyph_commands++;
-        s_command command = {slot, (int16_t)code, x, y, COMMAND_GLYPH, 0, 0, {}};
-        memcpy(command.colors, colors, sizeof(command.colors));
-        current_command = Alloc_Command(command);
-    }
-
-    void End_Draw() {
-        Clear_Draw_State();
-    }
-
-    void Stamp_Run(const uint8_t* dst, int32_t count) {
-        Stamp_Page(video::current_video_page, dst, count);
-    }
-
-    void Stamp_Page(const uint8_t* page, const uint8_t* dst, int32_t count) {
-        if (!enabled || count <= 0) {
-            return;
+        draw.source = SOURCE_ART;
+        draw.frame = &font->glyphs[code];
+        draw.glyph = true;
+        draw.x = x;
+        draw.y = y;
+        memcpy(draw.colors, colors, sizeof(draw.colors));
+        if (probe_x >= 0) {
+            draw.name = std::string("glyph:") + font_file + "/" + std::to_string(font_index) + "/" + std::to_string(code);
         }
-        uint32_t* plane = Owner_Plane_For(page);
-        if (plane == nullptr) {
-            return;
-        }
-        const ptrdiff_t offset = dst - page;
-        const ptrdiff_t limit = (ptrdiff_t)plane_width * plane_height;
-        if (offset < 0 || offset + count > limit) {
-            return;
-        }
-        uint32_t* owner = plane + offset;
-        if (current_command == 0 && source_plane == nullptr) {
-            memset(owner, 0, (size_t)count * sizeof(uint32_t));
-            if (probe_x >= 0) {
-                for (int32_t i = 0; i < count; ++i) {
-                    Probe_Write((int32_t)((offset + i) % plane_width), (int32_t)((offset + i) / plane_width), 0, dst[i], "clear");
-                }
-            }
-            return;
-        }
-        int32_t x = (int32_t)(offset % plane_width);
-        int32_t y = (int32_t)(offset / plane_width);
-        for (int32_t i = 0; i < count; ++i) {
-            owner[i] = Owner_For(x, y, dst[i]);
-            if (probe_x >= 0) {
-                Probe_Write(x, y, owner[i], dst[i], "stamp");
-            }
-            if (++x == plane_width) {
-                x = 0;
-                ++y;
-            }
-        }
-    }
-
-    void Copy_Plane_Span(const uint8_t* src_page, const uint8_t* dst_page, int32_t offset, int32_t count) {
-        if (!enabled || count <= 0 || offset < 0) {
-            return;
-        }
-        uint32_t* src = Owner_Plane_For(src_page);
-        uint32_t* dst = Owner_Plane_For(dst_page);
-        if (src == nullptr || dst == nullptr || src == dst || offset + count > plane_width * plane_height) {
-            return;
-        }
-        memcpy(dst + offset, src + offset, (size_t)count * sizeof(uint32_t));
-        memcpy(Under_Plane_For(dst_page) + offset, Under_Plane_For(src_page) + offset, (size_t)count * sizeof(uint32_t));
     }
 
     void Begin_Asset_Draw(const char* lbx_name, int32_t entry, int16_t frame, int16_t x, int16_t y) {
-        Clear_Draw_State();
         if (!initialized) {
             Initialize();
         }
+        Start_Draw();
         if (!enabled || lbx_name == nullptr) {
             return;
         }
@@ -861,101 +996,148 @@ namespace hd_sprites {
         if (!asset->loaded) {
             Load_Asset(asset);
         }
-        if (Resolve_Frame(asset, frame) == nullptr) {
+        const s_hd_frame* art = Resolve_Frame(asset, frame);
+        if (art == nullptr) {
             return;
         }
-        current_command = Alloc_Command({asset_index, frame, x, y, COMMAND_SPRITE, 0, 0, {}});
+        draw.source = SOURCE_ART;
+        draw.frame = art;
+        draw.x = x;
+        draw.y = y;
+        draw.glassed = asset->glassed;
+        if (probe_x >= 0) {
+            draw.name = asset->directory;
+        }
     }
 
-    void Stamp_Glass(const uint8_t* dst, uint8_t background_value) {
+    void End_Draw() {
+        Start_Draw();
+    }
+
+    void Stamp_Run(const uint8_t* dst, int32_t count) {
+        Stamp_Page(video::current_video_page, dst, count);
+    }
+
+    void Stamp_Page(const uint8_t* page, const uint8_t* dst, int32_t count) {
+        if (!enabled || count <= 0) {
+            return;
+        }
+        s_surface* target = Page_Surface(page);
+        if (target == nullptr) {
+            return;
+        }
+        const ptrdiff_t offset = dst - page;
+        if (offset < 0 || offset + count > (ptrdiff_t)target->width * target->height) {
+            return;
+        }
+        for (int32_t i = 0; i < count; ++i) {
+            Stamp(*target, (int32_t)offset + i, dst[i], -1);
+        }
+    }
+
+    void Stamp_Glass(const uint8_t* dst, uint8_t background_value, int32_t level) {
+        (void)background_value;
         if (!enabled) {
             return;
         }
-        uint32_t* plane = Owner_Plane_For(video::current_video_page);
-        uint32_t* under = Under_Plane_For(video::current_video_page);
-        if (plane == nullptr || under == nullptr) {
+        s_surface* target = Page_Surface(video::current_video_page);
+        if (target == nullptr) {
             return;
         }
         const ptrdiff_t offset = dst - video::current_video_page;
-        if (offset < 0 || offset >= (ptrdiff_t)plane_width * plane_height) {
+        if (offset < 0 || offset >= (ptrdiff_t)target->width * target->height) {
             return;
         }
-        const uint32_t below = plane[offset];
-        // Keep the owner of what was underneath only if its record is still valid.
-        under[offset] = ((below != 0 && (below & 0xFF) == background_value) ? (below & ~0xFFu) : 0u) | background_value;
-        plane[offset] = Owner_For((int32_t)(offset % plane_width), (int32_t)(offset / plane_width), *dst);
+        Stamp(*target, (int32_t)offset, *dst, level);
     }
 
     void Bitmap_Reset(const void* bitmap, int32_t width, int32_t height) {
         if (!enabled || bitmap == nullptr || width <= 0 || height <= 0) {
             return;
         }
-        s_bitmap_plane& plane = bitmap_planes[bitmap];
-        plane.width = width;
-        plane.height = height;
-        plane.owners.assign((size_t)width * (size_t)height, 0);
+        Flush_Pending();
+        s_surface& image = images[bitmap];
+        image.width = width;
+        image.height = height;
+        image.hd.clear();
+        image.shadow.clear();
+        image.mark.clear();
     }
 
     void Stamp_Bitmap(const void* bitmap, int32_t index, uint8_t value) {
         if (!enabled) {
             return;
         }
-        const auto found = bitmap_planes.find(bitmap);
-        if (found == bitmap_planes.end()) {
+        const auto found = images.find(bitmap);
+        if (found == images.end()) {
             return;
         }
-        s_bitmap_plane& plane = found->second;
-        if (index < 0 || (size_t)index >= plane.owners.size()) {
+        s_surface& image = found->second;
+        if (index < 0 || index >= image.width * image.height) {
             return;
         }
-        plane.owners[(size_t)index] = Owner_For(index % plane.width, index / plane.width, value);
+        if (draw.source == SOURCE_IMAGE && draw.image != &image) {
+            Ensure_Hd(image);
+        }
+        Stamp(image, index, value, -1);
     }
 
     void Bitmap_Copy(const void* dst, const void* src) {
         if (!enabled || dst == src) {
             return;
         }
-        const auto from = bitmap_planes.find(src);
-        auto to = bitmap_planes.find(dst);
-        if (to == bitmap_planes.end()) {
+        Flush_Pending();
+        const auto from = images.find(src);
+        auto to = images.find(dst);
+        if (to == images.end()) {
             return;
         }
-        if (from == bitmap_planes.end() || from->second.width != to->second.width ||
-            from->second.height != to->second.height) {
-            std::fill(to->second.owners.begin(), to->second.owners.end(), 0u);
+        s_surface& target = to->second;
+        if (from == images.end() || from->second.hd.empty() || from->second.width != target.width ||
+            from->second.height != target.height) {
+            target.hd.clear();
+            target.shadow.clear();
+            target.mark.clear();
             return;
         }
-        to->second.owners = from->second.owners;
+        target.hd = from->second.hd;
+        target.shadow = from->second.shadow;
+        target.mark.assign(target.shadow.size(), 0u);
     }
 
     void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height) {
         if (!enabled) {
             return;
         }
-        auto to = bitmap_planes.find(bitmap);
-        const uint32_t* page_plane = Owner_Plane_For(video::current_video_page);
-        if (to == bitmap_planes.end() || page_plane == nullptr || to->second.width != width ||
-            to->second.height != height) {
+        Flush_Pending();
+        auto to = images.find(bitmap);
+        s_surface* page = Page_Surface(video::current_video_page);
+        if (to == images.end() || page == nullptr || to->second.width != width || to->second.height != height) {
             return;
         }
-        Clear_Draw_State();
-        source_origin_x = -x1;
-        source_origin_y = -y1;
+        s_surface& image = to->second;
+        Ensure_Hd(image);
+        const uint8_t* pixels = video::current_video_page;
+        const size_t page_stride = (size_t)page->width * S;
+        const size_t image_stride = (size_t)width * S;
         for (int32_t y = 0; y < height; ++y) {
             for (int32_t x = 0; x < width; ++x) {
                 const int32_t px = x1 + x;
                 const int32_t py = y1 + y;
-                uint32_t owner = 0;
-                if (px >= 0 && py >= 0 && px < plane_width && py < plane_height) {
-                    const uint32_t page_owner = page_plane[(size_t)py * plane_width + px];
-                    if (page_owner != 0) {
-                        owner = (Translate(page_owner >> 8) << 8) | (page_owner & 0xFF);
-                    }
+                const size_t i = (size_t)y * width + x;
+                if (px < 0 || py < 0 || px >= page->width || py >= page->height) {
+                    image.shadow[i] = SHADOW_NONE;
+                    continue;
                 }
-                to->second.owners[(size_t)y * width + x] = owner;
+                const size_t p = (size_t)py * page->width + px;
+                image.shadow[i] = page->shadow[p] == pixels[p] ? page->shadow[p] : SHADOW_NONE;
+                const uint32_t* src = &page->hd[(size_t)py * S * page_stride + (size_t)px * S];
+                uint32_t* dst = &image.hd[(size_t)y * S * image_stride + (size_t)x * S];
+                for (int32_t sy = 0; sy < S; ++sy) {
+                    memcpy(dst + sy * image_stride, src + sy * page_stride, S * sizeof(uint32_t));
+                }
             }
         }
-        Clear_Draw_State();
     }
 
     void Allocate_Planes(int32_t width, int32_t height) {
@@ -963,380 +1145,172 @@ namespace hd_sprites {
             return;
         }
         Free_Planes();
-        const size_t count = (size_t)width * (size_t)height;
-        plane_off = (uint32_t*)calloc(count, sizeof(uint32_t));
-        plane_back = (uint32_t*)calloc(count, sizeof(uint32_t));
-        plane_published = (uint32_t*)calloc(count, sizeof(uint32_t));
-        under_off = (uint32_t*)calloc(count, sizeof(uint32_t));
-        under_back = (uint32_t*)calloc(count, sizeof(uint32_t));
-        under_published = (uint32_t*)calloc(count, sizeof(uint32_t));
-        plane_present = (uint32_t*)calloc(count, sizeof(uint32_t));
-        under_present = (uint32_t*)calloc(count, sizeof(uint32_t));
-        if (plane_off == nullptr || plane_back == nullptr || plane_published == nullptr || under_off == nullptr ||
-            under_back == nullptr || under_published == nullptr || plane_present == nullptr || under_present == nullptr) {
-            Free_Planes();
-            enabled = false;
-            return;
-        }
-        plane_width = width;
-        plane_height = height;
+        Allocate_Page(page_off, width, height);
+        Allocate_Page(page_back, width, height);
+        Allocate_Page(page_published, width, height);
+        Allocate_Page(page_present, width, height);
     }
 
     void Free_Planes() {
-        free(plane_off);
-        free(plane_back);
-        free(plane_published);
-        free(under_off);
-        free(under_back);
-        free(under_published);
-        free(plane_present);
-        free(under_present);
-        plane_off = plane_back = plane_published = plane_present = nullptr;
-        under_off = under_back = under_published = under_present = nullptr;
-        owner_changes.clear();
-        owner_changes_full = true;
-        plane_width = plane_height = 0;
+        pending.clear();
+        Free_Surface(page_off);
+        Free_Surface(page_back);
+        Free_Surface(page_published);
+        Free_Surface(page_present);
     }
 
     void Copy_Plane(const uint8_t* src_page, const uint8_t* dst_page) {
-        uint32_t* src = Owner_Plane_For(src_page);
-        uint32_t* dst = Owner_Plane_For(dst_page);
-        if (src != nullptr && dst != nullptr && src != dst) {
-            memcpy(dst, src, (size_t)plane_width * plane_height * sizeof(uint32_t));
-            memcpy(Under_Plane_For(dst_page), Under_Plane_For(src_page), (size_t)plane_width * plane_height * sizeof(uint32_t));
+        s_surface* src = Page_Surface(src_page);
+        s_surface* dst = Page_Surface(dst_page);
+        if (src == nullptr || dst == nullptr || src == dst) {
+            return;
+        }
+        Flush_Pending();
+        dst->hd = src->hd;
+        dst->shadow = src->shadow;
+        std::fill(dst->row_dirty.begin(), dst->row_dirty.end(), (uint8_t)1);
+    }
+
+    void Copy_Plane_Span(const uint8_t* src_page, const uint8_t* dst_page, int32_t offset, int32_t count) {
+        s_surface* src = Page_Surface(src_page);
+        s_surface* dst = Page_Surface(dst_page);
+        if (src == nullptr || dst == nullptr || src == dst || count <= 0 || offset < 0 ||
+            offset + count > src->width * src->height) {
+            return;
+        }
+        Flush_Pending();
+        const size_t stride = (size_t)src->width * S;
+        while (count > 0) {
+            const int32_t x = offset % src->width;
+            const int32_t y = offset / src->width;
+            const int32_t run = SDL_min(count, src->width - x);
+            memcpy(&dst->shadow[(size_t)offset], &src->shadow[(size_t)offset], (size_t)run * sizeof(uint16_t));
+            for (int32_t sy = 0; sy < S; ++sy) {
+                const size_t at = ((size_t)y * S + sy) * stride + (size_t)x * S;
+                memcpy(&dst->hd[at], &src->hd[at], (size_t)run * S * sizeof(uint32_t));
+            }
+            dst->row_dirty[(size_t)y] = 1;
+            offset += run;
+            count -= run;
         }
     }
 
     void Publish_Plane(const uint8_t* published_page_pixels) {
         (void)published_page_pixels;
-        if (plane_off != nullptr && plane_published != nullptr) {
-            memcpy(plane_published, plane_off, (size_t)plane_width * plane_height * sizeof(uint32_t));
-            memcpy(under_published, under_off, (size_t)plane_width * plane_height * sizeof(uint32_t));
-            for (int32_t i = 0; i < 16; ++i) {
-                // Glass colours are 6-bit VGA values like the palette.
-                glass_published[i].intensity = video::glass_colors[i].intensity;
-                glass_published[i].r = (uint8_t)((video::glass_colors[i].r & 0x3F) * 255 / 63);
-                glass_published[i].g = (uint8_t)((video::glass_colors[i].g & 0x3F) * 255 / 63);
-                glass_published[i].b = (uint8_t)((video::glass_colors[i].b & 0x3F) * 255 / 63);
+        if (page_off.hd.empty()) {
+            return;
+        }
+        Flush_Pending();
+        // Settle pixels changed by code without hooks: the original pixel, enlarged.
+        const uint8_t* page = video::g_page_off.pixels;
+        uint32_t settled = 0;
+        for (int32_t y = 0; y < page_off.height; ++y) {
+            const size_t row = (size_t)y * page_off.width;
+            for (int32_t x = 0; x < page_off.width; ++x) {
+                if (page_off.shadow[row + x] != page[row + x]) {
+                    const uint8_t value = page[row + x];
+                    page_off.shadow[row + x] = value;
+                    Fill_Block(page_off, x, y, debug_sd ? Literal(Mix(0xFF0000u, Base_Rgb(value), 96)) : Indexed(value));
+                    settled++;
+                }
             }
         }
+        if (stats_enabled) {
+            stats_settled_pixels += settled;
+            if (++stats_publishes % 100 == 0) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: %u pixels settled to plain scaling over the last 100 frames", stats_settled_pixels);
+                stats_settled_pixels = 0;
+            }
+        }
+        const size_t row_size = (size_t)page_off.width * S * S;
+        for (int32_t y = 0; y < page_off.height; ++y) {
+            if (page_off.row_dirty[(size_t)y] == 0) {
+                continue;
+            }
+            memcpy(&page_published.hd[(size_t)y * row_size], &page_off.hd[(size_t)y * row_size], row_size * sizeof(uint32_t));
+            page_off.row_dirty[(size_t)y] = 0;
+            page_published.row_dirty[(size_t)y] = 1;
+        }
+        // Literal pixels follow screen fades: compare the shown palette with the base palette.
+        uint64_t base = 0;
+        uint64_t shown = 0;
+        for (int32_t i = 1; i < 256; ++i) {
+            const s_palette_entry& entry = video::current_palette[i];
+            base += (uint64_t)((entry.r & 0x3F) + (entry.g & 0x3F) + (entry.b & 0x3F)) * 4;
+            shown += (uint64_t)video::g_palette_entries[i].r + video::g_palette_entries[i].g + video::g_palette_entries[i].b;
+        }
+        published_fade = base == 0 ? 256u : (uint32_t)SDL_min((uint64_t)256, shown * 256 / base);
     }
 
     void Snapshot_Plane() {
-        if (plane_published == nullptr || plane_present == nullptr) {
+        if (page_published.hd.empty()) {
             return;
         }
-        if (memcmp(glass_present, glass_published, sizeof(glass_present)) != 0) {
-            memcpy(glass_present, glass_published, sizeof(glass_present));
-            owner_changes_full = true;
-        }
-        // Rows whose owners changed are merged into bands of consecutive rows.
-        s_rect band = {};
-        bool open = false;
-        for (int32_t y = 0; y < plane_height; ++y) {
-            const size_t row = (size_t)y * plane_width;
-            int32_t x0 = plane_width;
-            int32_t x1 = -1;
-            if (!owner_changes_full) {
-                for (int32_t x = 0; x < plane_width; ++x) {
-                    if (plane_present[row + x] != plane_published[row + x] ||
-                        under_present[row + x] != under_published[row + x]) {
-                        x0 = SDL_min(x0, x);
-                        x1 = x;
-                    }
-                }
+        const size_t row_size = (size_t)page_published.width * S * S;
+        for (int32_t y = 0; y < page_published.height; ++y) {
+            if (page_published.row_dirty[(size_t)y] == 0) {
+                continue;
             }
-            if (x1 >= 0) {
-                if (open) {
-                    const int32_t left = SDL_min(band.x, x0);
-                    const int32_t right = SDL_max(band.x + band.width, x1 + 1);
-                    band.x = left;
-                    band.width = right - left;
-                    band.height = y - band.y + 1;
-                } else {
-                    band = {x0, y, x1 - x0 + 1, 1};
-                    open = true;
-                }
-            } else if (open) {
-                owner_changes.push_back(band);
-                open = false;
-            }
+            memcpy(&page_present.hd[(size_t)y * row_size], &page_published.hd[(size_t)y * row_size], row_size * sizeof(uint32_t));
+            page_published.row_dirty[(size_t)y] = 0;
+            page_present.row_dirty[(size_t)y] = 1;
         }
-        if (open) {
-            owner_changes.push_back(band);
-        }
-        const size_t bytes = (size_t)plane_width * plane_height * sizeof(uint32_t);
-        memcpy(plane_present, plane_published, bytes);
-        memcpy(under_present, under_published, bytes);
+        present_fade = published_fade;
     }
 
-    bool Take_Owner_Changes(std::vector<s_rect>* rects) {
-        const bool full = owner_changes_full;
-        rects->insert(rects->end(), owner_changes.begin(), owner_changes.end());
-        owner_changes.clear();
-        owner_changes_full = false;
-        return full;
-    }
-
-    namespace {
-
-        uint32_t Blend(uint32_t over, uint32_t under, uint32_t alpha) {
-            const uint32_t inv = 255u - alpha;
-            const uint32_t r = (((over >> 16) & 0xFF) * alpha + ((under >> 16) & 0xFF) * inv) / 255u;
-            const uint32_t g = (((over >> 8) & 0xFF) * alpha + ((under >> 8) & 0xFF) * inv) / 255u;
-            const uint32_t b = ((over & 0xFF) * alpha + (under & 0xFF) * inv) / 255u;
-            return 0xFF000000u | (r << 16) | (g << 8) | b;
+    bool Resolve(const video::s_palette_color* palette, uint32_t* output, int32_t* row_first, int32_t* row_last) {
+        static uint32_t last_palette[256];
+        static uint32_t last_fade = 0xFFFFFFFFu;
+        if (page_present.hd.empty()) {
+            return false;
         }
-
-        // Darkens `rgb` by the shade mask sampled bilinearly at sub-pixel (sx, sy) of mask pixel
-        // (px, py), which turns the stepped 1x shadow edge into a smooth gradient.
-        uint32_t Shade(uint32_t rgb, const s_shade_mask& shade, int32_t px, int32_t py, int32_t sx, int32_t sy) {
-            if (shade.width <= 0 || shade.height <= 0) {
-                return rgb;
-            }
-            const int32_t s = HD_SPRITES_SCALE;
-            // Sample position in 1/s pixel units, relative to mask pixel centres.
-            const int32_t fx = SDL_clamp(px * s + sx - s / 2, 0, (shade.width - 1) * s);
-            const int32_t fy = SDL_clamp(py * s + sy - s / 2, 0, (shade.height - 1) * s);
-            const int32_t x0 = fx / s;
-            const int32_t y0 = fy / s;
-            const int32_t x1 = SDL_min(x0 + 1, shade.width - 1);
-            const int32_t y1 = SDL_min(y0 + 1, shade.height - 1);
-            const int32_t wx = fx - x0 * s;
-            const int32_t wy = fy - y0 * s;
-            const uint8_t* b = shade.brightness.data();
-            const int32_t top = b[y0 * shade.width + x0] * (s - wx) + b[y0 * shade.width + x1] * wx;
-            const int32_t bottom = b[y1 * shade.width + x0] * (s - wx) + b[y1 * shade.width + x1] * wx;
-            const uint32_t percent = (uint32_t)((top * (s - wy) + bottom * wy) / (s * s));
-            if (percent >= 100) {
-                return rgb;
-            }
-            const uint32_t r = ((rgb >> 16) & 0xFF) * percent / 100u;
-            const uint32_t g = ((rgb >> 8) & 0xFF) * percent / 100u;
-            const uint32_t bl = (rgb & 0xFF) * percent / 100u;
-            return 0xFF000000u | (r << 16) | (g << 8) | bl;
-        }
-
-        uint32_t Apply_Glass(uint32_t rgb, int32_t level) {
-            const s_glass& glass = glass_present[level & 15];
-            if (glass.intensity == 0) {
-                return rgb;
-            }
-            const uint32_t tint = 0xFF000000u | ((uint32_t)glass.r << 16) | ((uint32_t)glass.g << 8) | glass.b;
-            return Blend(tint, rgb, glass.intensity >= 100 ? 255u : (uint32_t)glass.intensity * 255u / 100u);
-        }
-
-        // HD colour of the art recorded in `under` at sub-pixel (sx, sy) of page pixel (x, y),
-        // over the flat original colour of that pixel.
-        uint32_t Under_Color(uint32_t under, int32_t x, int32_t y, int32_t sx, int32_t sy, const uint32_t* palette) {
-            const uint32_t flat = palette[under & 0xFF];
-            const uint32_t id = under >> 8;
-            if (id == 0) {
-                return flat;
-            }
-            const s_command& command = commands[id];
-            const bool glyph = command.kind == COMMAND_GLYPH;
-            const s_hd_asset* asset = nullptr;
-            const s_hd_frame* frame = nullptr;
-            if (glyph) {
-                frame = Glyph_Frame(command.asset, command.frame);
-            } else if (command.asset >= 0 && command.asset < asset_count) {
-                asset = assets[command.asset];
-                frame = Resolve_Frame(asset, command.frame);
-            }
-            if (frame == nullptr) {
-                return flat;
-            }
-            const int32_t s = HD_SPRITES_SCALE;
-            const int32_t lx = (x - command.x - frame->origin_x) * s + sx;
-            const int32_t ly = (y - command.y - frame->origin_y) * s + sy;
-            if (lx < 0 || ly < 0 || lx >= frame->width || ly >= frame->height) {
-                return flat;
-            }
-            const size_t i = (size_t)ly * frame->width + lx;
-            uint8_t index = frame->index[i];
-            const uint8_t alpha = frame->alpha[i];
-            if (alpha == 0) {
-                return flat;
-            }
-            if (glyph) {
-                if (index < 1 || index > 8) {
-                    return flat;
-                }
-                index = command.colors[index - 1];
-            } else if ((asset->glassed || command.glassed) && index >= HD_GLASS_FIRST) {
-                return flat;
-            } else if (command.remap != 0) {
-                index = remap_tables[command.remap][index];
-            }
-            return alpha == 255 ? palette[index] : Blend(palette[index], flat, alpha);
-        }
-
-    } // namespace
-
-    namespace {
-
-        struct s_compose_counts {
-            int32_t replaced;
-            int32_t replaced_glyph;
-            int32_t owned_pixels;
-            int32_t stale_pixels;
-        };
-
-        void Compose_Rect(const s_compose_input* in, uint32_t* output, const uint32_t* palette, int32_t x0, int32_t y0, int32_t x1, int32_t y1, s_compose_counts* counts) {
-            const int32_t s = HD_SPRITES_SCALE;
-            const int32_t out_width = in->width * s;
-
-            // Base image: the regular scaler output resampled to 4x.
-            for (int32_t oy = y0 * s; oy < y1 * s; ++oy) {
-                const uint32_t* base_row = in->base + (size_t)(oy * in->base_factor / s) * in->base_stride;
-                uint32_t* out_row = output + (size_t)oy * out_width;
-                if (in->base_factor == s) {
-                    memcpy(out_row + x0 * s, base_row + x0 * s, (size_t)(x1 - x0) * s * sizeof(uint32_t));
-                    continue;
-                }
-                for (int32_t ox = x0 * s; ox < x1 * s; ++ox) {
-                    out_row[ox] = base_row[ox * in->base_factor / s];
-                }
-            }
-
-            if (!enabled || plane_present == nullptr || plane_width != in->width || plane_height != in->height) {
-                return;
-            }
-
-            int32_t& replaced = counts->replaced;
-            int32_t& replaced_glyph = counts->replaced_glyph;
-            int32_t& owned_pixels = counts->owned_pixels;
-            int32_t& stale_pixels = counts->stale_pixels;
-            for (int32_t y = y0; y < y1; ++y) {
-                for (int32_t x = x0; x < x1; ++x) {
-                    const size_t i = (size_t)y * in->width + x;
-                    const uint32_t owner = plane_present[i];
-                    if (owner != 0) {
-                        owned_pixels++;
-                    }
-                    if (owner == 0 || (owner & 0xFF) != in->page[i]) {
-                        if (owner != 0) {
-                            stale_pixels++;
-                            if (debug_stale) {
-                                // ORION2RE_HD_DEBUG=stale: tint pixels whose owner record went stale.
-                                for (int32_t sy = 0; sy < s; ++sy) {
-                                    uint32_t* out = output + (size_t)(y * s + sy) * out_width + (size_t)x * s;
-                                    for (int32_t sx = 0; sx < s; ++sx) {
-                                        out[sx] = (out[sx] & 0xFF7F7F7Fu) | 0x00800000u;
-                                    }
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                    if (in->cursor_x >= 0 && x >= in->cursor_x && x < in->cursor_x + in->cursor_size &&
-                        y >= in->cursor_y && y < in->cursor_y + in->cursor_size) {
-                        continue;
-                    }
-                    const s_command command = commands[owner >> 8];
-                    const bool glyph = command.kind == COMMAND_GLYPH;
-                    const s_hd_asset* asset = nullptr;
-                    const s_hd_frame* frame = nullptr;
-                    if (glyph) {
-                        frame = Glyph_Frame(command.asset, command.frame);
-                    } else if (command.asset >= 0 && command.asset < asset_count) {
-                        asset = assets[command.asset];
-                        frame = Resolve_Frame(asset, command.frame);
-                    }
-                    if (frame == nullptr) {
-                        continue;
-                    }
-                    const int32_t local_x = (x - command.x - frame->origin_x) * s;
-                    const int32_t local_y = (y - command.y - frame->origin_y) * s;
-                    if (local_x < 0 || local_y < 0 || local_x + s > frame->width || local_y + s > frame->height) {
-                        continue;
-                    }
-                    for (int32_t sy = 0; sy < s; ++sy) {
-                        const size_t src_row = (size_t)(local_y + sy) * frame->width + local_x;
-                        uint32_t* out = output + (size_t)(y * s + sy) * out_width + (size_t)x * s;
-                        for (int32_t sx = 0; sx < s; ++sx) {
-                            const uint8_t alpha = frame->alpha[src_row + sx];
-                            uint8_t index = frame->index[src_row + sx];
-                            if (alpha == 0) {
-                                continue;
-                            }
-                            if (glyph) {
-                                // Glyph art stores colour roles; the recorded style supplies indices.
-                                if (index < 1 || index > 8) {
-                                    continue;
-                                }
-                                index = command.colors[index - 1];
-                            } else if ((asset->glassed || command.glassed) && index >= HD_GLASS_FIRST) {
-                                // Translucent pixel: tint the HD art that was underneath.
-                                const uint32_t tinted = Apply_Glass(
-                                    Under_Color(under_present[i], x, y, sx, sy, palette), index - HD_GLASS_FIRST);
-                                out[sx] = alpha == 255 ? tinted : Blend(tinted, out[sx], alpha);
-                                continue;
-                            } else if (command.remap != 0) {
-                                index = remap_tables[command.remap][index];
-                            }
-                            uint32_t color = palette[index];
-                            if (command.shade != 0) {
-                                color = Shade(color, shade_masks[command.shade], x - command.x, y - command.y, sx, sy);
-                            }
-                            if (alpha == 255) {
-                                out[sx] = color;
-                                continue;
-                            }
-                            const uint32_t under = out[sx];
-                            const uint32_t inv = 255u - alpha;
-                            const uint32_t r = (((color >> 16) & 0xFF) * alpha + ((under >> 16) & 0xFF) * inv) / 255u;
-                            const uint32_t g = (((color >> 8) & 0xFF) * alpha + ((under >> 8) & 0xFF) * inv) / 255u;
-                            const uint32_t b = ((color & 0xFF) * alpha + (under & 0xFF) * inv) / 255u;
-                            out[sx] = 0xFF000000u | (r << 16) | (g << 8) | b;
-                        }
-                    }
-                    ++replaced;
-                    if (glyph) {
-                        ++replaced_glyph;
-                    }
-                }
-            }
-        }
-
-    } // namespace
-
-    int32_t Compose(const s_compose_input* in, uint32_t* output) {
-        uint32_t palette[256];
+        uint32_t colors[256];
         for (int32_t i = 0; i < 256; ++i) {
-            palette[i] = 0xFF000000u | ((uint32_t)in->palette[i].r << 16) | ((uint32_t)in->palette[i].g << 8) | in->palette[i].b;
+            colors[i] = ((uint32_t)palette[i].r << 16) | ((uint32_t)palette[i].g << 8) | palette[i].b;
         }
-        s_compose_counts counts = {};
-        if (in->rects == nullptr) {
-            Compose_Rect(in, output, palette, 0, 0, in->width, in->height, &counts);
-        } else {
-            for (int32_t r = 0; r < in->rect_count; ++r) {
-                const s_rect& rect = in->rects[r];
-                const int32_t x0 = SDL_max(rect.x, 0);
-                const int32_t y0 = SDL_max(rect.y, 0);
-                const int32_t x1 = SDL_min(rect.x + rect.width, in->width);
-                const int32_t y1 = SDL_min(rect.y + rect.height, in->height);
-                if (x0 < x1 && y0 < y1) {
-                    Compose_Rect(in, output, palette, x0, y0, x1, y1, &counts);
+        const bool all = memcmp(colors, last_palette, sizeof(colors)) != 0 || present_fade != last_fade;
+        memcpy(last_palette, colors, sizeof(colors));
+        last_fade = present_fade;
+        const uint32_t fade = present_fade;
+        const size_t row_size = (size_t)page_present.width * S * S;
+        int32_t first = -1;
+        int32_t last = -1;
+        for (int32_t y = 0; y < page_present.height; ++y) {
+            if (!all && page_present.row_dirty[(size_t)y] == 0) {
+                continue;
+            }
+            page_present.row_dirty[(size_t)y] = 0;
+            if (first < 0) {
+                first = y;
+            }
+            last = y;
+            const uint32_t* src = &page_present.hd[(size_t)y * row_size];
+            uint32_t* dst = output + (size_t)y * row_size;
+            for (size_t i = 0; i < row_size; ++i) {
+                const uint32_t pixel = src[i];
+                uint32_t rgb;
+                if ((pixel & HD_LITERAL) != 0) {
+                    rgb = pixel & 0xFFFFFFu;
+                    if (fade < 256) {
+                        rgb = ((((rgb >> 16) & 0xFF) * fade >> 8) << 16) | ((((rgb >> 8) & 0xFF) * fade >> 8) << 8) |
+                            ((rgb & 0xFF) * fade >> 8);
+                    }
+                } else {
+                    const uint32_t alpha = (pixel >> 16) & 0xFF;
+                    rgb = colors[pixel & 0xFF];
+                    if (alpha < 255) {
+                        rgb = Mix(rgb, (pixel & HD_CLEAR) != 0 ? 0u : colors[(pixel >> 8) & 0xFF], alpha);
+                    }
                 }
+                dst[i] = 0xFF000000u | rgb;
             }
         }
-        if (stats_enabled && (++stats_compose_calls % 100) == 0) {
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "hd stats: compose owned=%d stale=%d replaced=%d (glyph %d); glyph commands %u, glyphs without art %u; "
-                "allocated commands %u, remap tables %u, shade masks %u",
-                counts.owned_pixels,
-                counts.stale_pixels,
-                counts.replaced,
-                counts.replaced_glyph,
-                stats_glyph_commands,
-                stats_glyph_missing_art,
-                next_command,
-                next_remap_table,
-                next_shade_mask);
+        if (first < 0) {
+            return false;
         }
-        return counts.replaced;
+        *row_first = first * S;
+        *row_last = (last + 1) * S;
+        return true;
     }
 
 } // namespace hd_sprites
