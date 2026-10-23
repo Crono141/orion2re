@@ -1276,6 +1276,7 @@ namespace platform {
         //   move <x> <y>        move the mouse (640x480 game coordinates)
         //   click <x> <y>       move, press and release the left button
         //   key <name>          press a key (SDL key name, e.g. Return, Escape, a)
+        //   event <name>        window event: focus_lost, focus_gained, exposed
         //   screenshot <file>   save the next presented window as BMP
         //   quit                request exit
         struct s_script_step {
@@ -1368,6 +1369,14 @@ namespace platform {
                     (void)SDL_PushEvent(&event);
                     event.type = SDL_EVENT_KEY_UP;
                     event.key.down = false;
+                    (void)SDL_PushEvent(&event);
+                } else if (step.command == "event") {
+                    // Window events: focus_lost, focus_gained, exposed.
+                    SDL_Event event = {};
+                    event.type = step.text == "focus_lost"     ? SDL_EVENT_WINDOW_FOCUS_LOST
+                                 : step.text == "focus_gained" ? SDL_EVENT_WINDOW_FOCUS_GAINED
+                                                               : SDL_EVENT_WINDOW_EXPOSED;
+                    event.window.windowID = g_sdl_window != nullptr ? SDL_GetWindowID(g_sdl_window) : 0;
                     (void)SDL_PushEvent(&event);
                 } else if (step.command == "screenshot") {
                     g_pending_screenshot = step.text;
