@@ -102,10 +102,11 @@ namespace hd_sprites {
         std::unordered_map<const void*, std::string> stats_names;
         std::unordered_map<std::string, uint32_t> stats_missing;
         uint32_t stats_draws;
+        uint32_t stats_interval = 20000;
 
         void Stats_Missing(const std::string& key) {
             stats_missing[key]++;
-            if (++stats_draws % 20000 != 0) {
+            if (++stats_draws % stats_interval != 0) {
                 return;
             }
             std::vector<std::pair<uint32_t, std::string>> top;
@@ -349,7 +350,11 @@ namespace hd_sprites {
         }
         initialized = true;
         enabled = vfs::File_Exists("hd/pack.json") != 0;
-        stats_enabled = enabled && SDL_getenv("ORION2RE_HD_STATS") != nullptr;
+        const char* stats = SDL_getenv("ORION2RE_HD_STATS");
+        stats_enabled = enabled && stats != nullptr;
+        if (stats_enabled && atoi(stats) > 1) {
+            stats_interval = (uint32_t)atoi(stats);
+        }
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd: %s", enabled ? "HD sprite pack found" : "no HD sprite pack");
         if (enabled && video::g_page_off.pixels != nullptr) {
             Allocate_Planes(video::g_page_off.width, video::g_page_off.height);
