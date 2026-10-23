@@ -397,7 +397,9 @@ namespace hd_sprites {
         if (found == registrations.end()) {
             if (stats_enabled) {
                 const auto name = stats_names.find(anim);
-                Stats_Missing(name != stats_names.end() ? name->second : std::string("unregistered"));
+                Stats_Missing(name != stats_names.end() ? name->second
+                                                        : "unregistered:" + std::to_string(anim->width) + "x" +
+                                                              std::to_string(anim->height));
             }
             return;
         }
