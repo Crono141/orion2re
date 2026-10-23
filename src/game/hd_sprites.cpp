@@ -1116,7 +1116,8 @@ namespace hd_sprites {
         }
         if (font->state[code] != 1) {
             stats_glyph_missing_art++;
-            if (stats_enabled) {
+            // Spaces have no pixels and so no art: not worth reporting.
+            if (stats_enabled && code != ' ') {
                 Stats_Missing(std::string("glyph:") + font_file + "/" + std::to_string(font_index) + "/" + std::to_string(code));
             }
             return;
@@ -1337,6 +1338,85 @@ namespace hd_sprites {
         }
         for (int32_t i = 0; i < width * height; ++i) {
             target.shadow[(size_t)i] = dst_pixels[i];
+        }
+    }
+
+    void Bitmap_Glass(const void* bitmap, const uint8_t* pixels, int32_t level) {
+        if (!enabled || pixels == nullptr) {
+            return;
+        }
+        Flush_Pending();
+        auto found = images.find(bitmap);
+        if (found == images.end() || found->second.hd.empty()) {
+            return;
+        }
+        s_surface& image = found->second;
+        const uint8_t* table = video::glass_remap_colors[level & 15];
+        const size_t stride = (size_t)image.width * S;
+        for (int32_t i = 0; i < image.width * image.height; ++i) {
+            const uint16_t old = image.shadow[(size_t)i];
+            if (old == SHADOW_NONE) {
+                continue;
+            }
+            if (table[old] != pixels[i]) {
+                image.shadow[(size_t)i] = SHADOW_NONE;
+                continue;
+            }
+            image.shadow[(size_t)i] = pixels[i];
+            uint32_t* block = &image.hd[(size_t)(i / image.width) * S * stride + (size_t)(i % image.width) * S];
+            for (int32_t sy = 0; sy < S; ++sy) {
+                for (int32_t sx = 0; sx < S; ++sx) {
+                    uint32_t& pixel = block[sy * stride + sx];
+                    if ((pixel & HD_LITERAL) == 0 && (pixel & HD_CLEAR) != 0) {
+                        // Partly covered over transparency: tint the colour, keep the coverage.
+                        pixel = (pixel & ~0xFFu) | table[pixel & 0xFF];
+                    } else {
+                        pixel = Glass_Tint(pixel, level, 255u);
+                    }
+                }
+            }
+        }
+    }
+
+    void Bitmap_Sync(const void* bitmap, const uint8_t* pixels) {
+        if (!enabled || pixels == nullptr) {
+            return;
+        }
+        Flush_Pending();
+        auto found = images.find(bitmap);
+        if (found == images.end() || found->second.hd.empty()) {
+            return;
+        }
+        s_surface& image = found->second;
+        const size_t stride = (size_t)image.width * S;
+        for (int32_t i = 0; i < image.width * image.height; ++i) {
+            const uint16_t old = image.shadow[(size_t)i];
+            if (old == SHADOW_NONE || old == pixels[i]) {
+                continue;
+            }
+            image.shadow[(size_t)i] = pixels[i];
+            uint32_t* block = &image.hd[(size_t)(i / image.width) * S * stride + (size_t)(i % image.width) * S];
+            const uint32_t from = Base_Rgb((uint8_t)old);
+            const uint32_t to = Base_Rgb(pixels[i]);
+            for (int32_t sy = 0; sy < S; ++sy) {
+                for (int32_t sx = 0; sx < S; ++sx) {
+                    uint32_t& pixel = block[sy * stride + sx];
+                    if (pixels[i] == 0) {
+                        pixel = HD_CLEAR;
+                    } else if ((pixel & HD_LITERAL) == 0 && (pixel & HD_CLEAR) != 0) {
+                        pixel = (pixel & ~0xFFu) | pixels[i];
+                    } else {
+                        // Same per-channel change as the page pixel went through.
+                        const uint32_t c = Base_Color(pixel);
+                        uint32_t out = 0;
+                        for (int32_t shift = 0; shift <= 16; shift += 8) {
+                            const uint32_t f = SDL_max((from >> shift) & 0xFF, 1u);
+                            out |= SDL_min(255u, ((c >> shift) & 0xFF) * ((to >> shift) & 0xFF) / f) << shift;
+                        }
+                        pixel = Literal(out);
+                    }
+                }
+            }
         }
     }
 

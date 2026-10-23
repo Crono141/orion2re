@@ -76,6 +76,12 @@ namespace hd_sprites {
     // `dst` (width x height, pixels at `dst_pixels`) is a resized copy of `src`
     // (bitmap::Scale_Bitmap, e.g. stars on a zoomed-out galaxy).
     void Bitmap_Scale(const void* dst, const void* src, const uint8_t* dst_pixels, int32_t width, int32_t height);
+    // The pixels of `bitmap` (at `pixels`) went through glass level `level` (bitmap::Tint_Bitmap):
+    // its HD pixels are tinted the same way in true colour.
+    void Bitmap_Glass(const void* bitmap, const uint8_t* pixels, int32_t level);
+    // The pixels of `bitmap` were changed in place by plain recolouring (Mask_Out_Colors etc.):
+    // HD pixels whose page pixel became 0 turn transparent, other changes are recoloured.
+    void Bitmap_Sync(const void* bitmap, const uint8_t* pixels);
     // A rectangle of the current page captured into `bitmap`.
     void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height);
 
