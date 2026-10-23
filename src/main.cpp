@@ -183,6 +183,8 @@ int main(int argc, char** argv) {
         return -1;
     }
 
+    MOX2::skip_intro = startup_options.skip_intro ? 1 : 0;
+
     const char* base_path = SDL_GetBasePath();
 #if defined(__APPLE__)
     char executable_path[PATH_MAX];

@@ -30,6 +30,16 @@ DOCTEST_TEST_CASE("startup options default to orion2re.cfg and forward every arg
     DOCTEST_CHECK(options.remaining_command_line == "-seed 42 --profiler");
 }
 
+DOCTEST_TEST_CASE("--skip-intro is consumed and not forwarded") {
+    config::s_startup_options options;
+    std::string error;
+    DOCTEST_REQUIRE(Parse({}, &options, &error));
+    DOCTEST_CHECK_FALSE(options.skip_intro);
+    DOCTEST_REQUIRE(Parse({"-x", "--skip-intro", "--profile", "a"}, &options, &error));
+    DOCTEST_CHECK(options.skip_intro);
+    DOCTEST_CHECK(options.remaining_command_line == "-x");
+}
+
 DOCTEST_TEST_CASE("--profile selects a configuration below profiles/") {
     config::s_startup_options options;
     std::string error;

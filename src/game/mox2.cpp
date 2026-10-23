@@ -319,10 +319,11 @@ namespace MOX2 {
         if (MOX2::skip_intro == 0) {
             JIM::Draw_Logos();
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "mox2: logos drawn");
-            fields::Assign_Update_Function(RUSS::Mox_Update);
-            fonts::Load_Palette(5, 0, 0xFF);
-            mouse::Set_Mouse_List(&MOX::mouse_list_arrow, 1);
         }
+        // The menu needs this setup whether or not the logos ran.
+        fields::Assign_Update_Function(RUSS::Mox_Update);
+        fonts::Load_Palette(5, 0, 0xFF);
+        mouse::Set_Mouse_List(&MOX::mouse_list_arrow, 1);
 
         JIM::Play_Background_Music();
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "mox2: background music requested");

@@ -65,6 +65,11 @@ namespace config {
                 continue;
             }
 
+            if (strcmp(argv[index], "--skip-intro") == 0) {
+                options->skip_intro = true;
+                continue;
+            }
+
             bool matched = false;
             std::string value;
             if (!Match_Option(argc, argv, &index, "--profile", &matched, &value, error)) {
