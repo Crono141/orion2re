@@ -184,6 +184,7 @@ int main(int argc, char** argv) {
     }
 
     MOX2::skip_intro = startup_options.skip_intro ? 1 : 0;
+    MAINMENU::autoload_save_slot = (int16_t)(startup_options.load_save - 1);
 
     const char* base_path = SDL_GetBasePath();
 #if defined(__APPLE__)

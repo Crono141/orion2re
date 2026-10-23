@@ -15,6 +15,8 @@ namespace config {
         bool config_selected;
         // --skip-intro: go straight to the main menu without the logos and intro movie.
         bool skip_intro;
+        // --load-save <n>: load SAVE<n>.GAM (1-10) from the main menu as if chosen there; 0 = off.
+        int32_t load_save;
         // Arguments not consumed here, joined by single spaces.
         std::string remaining_command_line;
     };
@@ -26,6 +28,7 @@ namespace config {
      *   --profile <name>   Use profiles/<name>.cfg as the startup configuration.
      *   --config <path>    Use the VFS path <path> as the startup configuration.
      *   --skip-intro       Skip the logos and the intro movie.
+     *   --load-save <n>    Load SAVE<n>.GAM (1-10) straight from the main menu.
      * Both also accept the --option=value form. Profile names may contain
      * letters, digits, '-', '_' and '.', but may not start with '.'.
      * @param argc Argument count, including the program name.

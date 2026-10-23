@@ -40,6 +40,21 @@ DOCTEST_TEST_CASE("--skip-intro is consumed and not forwarded") {
     DOCTEST_CHECK(options.remaining_command_line == "-x");
 }
 
+DOCTEST_TEST_CASE("--load-save takes a save number from 1 to 10") {
+    config::s_startup_options options;
+    std::string error;
+    DOCTEST_REQUIRE(Parse({}, &options, &error));
+    DOCTEST_CHECK(options.load_save == 0);
+    DOCTEST_REQUIRE(Parse({"--load-save", "10"}, &options, &error));
+    DOCTEST_CHECK(options.load_save == 10);
+    DOCTEST_REQUIRE(Parse({"--load-save=1"}, &options, &error));
+    DOCTEST_CHECK(options.load_save == 1);
+    for (const char* bad : {"0", "11", "x", "3x", ""}) {
+        DOCTEST_CAPTURE(bad);
+        DOCTEST_CHECK_FALSE(Parse({"--load-save", bad}, &options, &error));
+    }
+}
+
 DOCTEST_TEST_CASE("--profile selects a configuration below profiles/") {
     config::s_startup_options options;
     std::string error;

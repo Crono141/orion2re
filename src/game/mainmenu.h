@@ -1,6 +1,9 @@
 #pragma once
 
 namespace MAINMENU {
+    // Save slot (0-based) to load on the first main-menu pass, or -1. Set by --load-save.
+    extern int16_t autoload_save_slot;
+
     extern bool show_mod_list;
 
 #pragma pack(push, 1)

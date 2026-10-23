@@ -90,6 +90,20 @@ namespace config {
                 continue;
             }
 
+            if (!Match_Option(argc, argv, &index, "--load-save", &matched, &value, error)) {
+                return false;
+            }
+            if (matched) {
+                char* end = nullptr;
+                const long slot = strtol(value.c_str(), &end, 10);
+                if (end == value.c_str() || *end != '\0' || slot < 1 || slot > 10) {
+                    *error = "--load-save expects a save number from 1 to 10";
+                    return false;
+                }
+                options->load_save = (int32_t)slot;
+                continue;
+            }
+
             if (!Match_Option(argc, argv, &index, "--config", &matched, &value, error)) {
                 return false;
             }
