@@ -40,6 +40,8 @@ namespace hd_sprites {
         struct s_hd_asset {
             std::string directory;
             bool loaded;
+            bool has_source_hash;
+            uint32_t source_hash; // FNV-1a of the LBX entry the art was made from
             bool glassed;
             int32_t scale;
             int32_t frame_count;
@@ -48,6 +50,7 @@ namespace hd_sprites {
 
         struct s_registration {
             int32_t asset;
+            uint32_t data_hash;
             uint8_t header[12];
             int32_t size;
         };
@@ -334,6 +337,9 @@ namespace hd_sprites {
             }
             asset->scale = (int32_t)yyjson_get_int(yyjson_obj_get(root, "scale"));
             asset->glassed = yyjson_get_bool(yyjson_obj_get(root, "glassed"));
+            yyjson_val* source_hash = yyjson_obj_get(root, "source_hash");
+            asset->has_source_hash = yyjson_is_uint(source_hash) || yyjson_is_int(source_hash);
+            asset->source_hash = asset->has_source_hash ? (uint32_t)yyjson_get_uint(source_hash) : 0;
             if (asset->scale != HD_SPRITES_SCALE) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: %s has scale %d, only %d is supported", meta_path.c_str(), asset->scale, HD_SPRITES_SCALE);
                 yyjson_doc_free(document);
@@ -571,6 +577,13 @@ namespace hd_sprites {
             if (!asset->loaded) {
                 Load_Asset(asset);
             }
+            if (asset->has_source_hash && asset->source_hash != found->second.data_hash) {
+                if (stats_enabled) {
+                    const auto name = stats_names.find(anim);
+                    Stats_Missing("source-mismatch:" + (name != stats_names.end() ? name->second : std::string("?")));
+                }
+                return;
+            }
             if (Resolve_Frame(asset, anim->current_frame) == nullptr) {
                 return;
             }
@@ -631,6 +644,14 @@ namespace hd_sprites {
         s_registration registration = {};
         registration.asset = Find_Or_Create_Asset(lbx_name, entry);
         registration.size = size;
+        // Fingerprint of the loaded bytes: a mod that replaces this entry with different art
+        // must not get HD art made from the original.
+        uint32_t hash = 2166136261u;
+        const uint8_t* bytes = (const uint8_t*)data;
+        for (int32_t i = 0; i < size; ++i) {
+            hash = (hash ^ bytes[i]) * 16777619u;
+        }
+        registration.data_hash = hash;
         memcpy(registration.header, data, sizeof(registration.header));
         if (registration.asset < 0) {
             registrations.erase(data);
