@@ -493,6 +493,13 @@ orion2re_add_unit_test(test_config_lifecycle
     LINK_SDL
 )
 
+orion2re_add_unit_test(test_startup_options
+    SOURCES
+        tests/unit/startup_options_test.cpp
+    PRODUCTION_SOURCES
+        src/config/startup_options.cpp
+)
+
 orion2re_add_unit_test(test_config_loader
     SOURCES
         tests/unit/config_loader_test.cpp

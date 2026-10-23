@@ -47,6 +47,28 @@ Some packages conflict because they change the same rules in incompatible ways. 
 
 The order of `enable` lines sets package priority: the first enabled package has the highest priority when packages provide the same game resource. A package may also require another active package to appear before or after it. The game checks this order but does not reorder the lines for you; list packages in the order required by their authors.
 
+## Profiles
+
+A profile is a separate configuration file that replaces `data/orion2re.cfg` for one launch. Use profiles to switch between mod sets without editing the main file. Put each profile in `data/profiles/` and start the game with `--profile` and the file name without `.cfg`:
+
+```text
+data/profiles/classic.cfg
+data/profiles/improved.cfg
+```
+
+```sh
+orion2re --profile improved
+```
+
+A profile uses the same statements as `data/orion2re.cfg`. To share common settings, such as the window size, include the main file before the profile's own `enable` lines:
+
+```text
+include ../orion2re.cfg;
+enable v150i;
+```
+
+`--config <path>` selects any configuration file by its path below `data/`. A selected profile or configuration file must exist; the game reports an error instead of starting with defaults. Saved games and `ORION2RE.SET` are shared by all profiles, so a save made with one mod set may require that set to load.
+
 ## Mods that replace game data
 
 A package can provide replacement graphics, text, sounds, or other game data. These replacements are active only while the package is enabled; the original game files remain unchanged.
