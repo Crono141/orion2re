@@ -194,7 +194,7 @@ namespace hd_sprites {
             }
             const s_command& c = commands[owner >> 8];
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "hd probe (%d,%d) %s: value=%u owner=%u kind=%d asset=%d frame=%d at %d,%d current_command=%u plane=%d",
+                "hd probe (%d,%d) %s: value=%u owner=%u kind=%d asset=%d (%s) frame=%d at %d,%d current_command=%u plane=%d",
                 x,
                 y,
                 where,
@@ -202,6 +202,7 @@ namespace hd_sprites {
                 owner >> 8,
                 owner ? c.kind : -1,
                 owner ? c.asset : -1,
+                owner && c.kind == COMMAND_SPRITE && c.asset >= 0 && c.asset < asset_count ? assets[c.asset]->directory.c_str() : "-",
                 owner ? c.frame : -1,
                 owner ? c.x : 0,
                 owner ? c.y : 0,
