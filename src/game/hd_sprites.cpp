@@ -1543,6 +1543,42 @@ namespace hd_sprites {
         }
     }
 
+    void Tint_Rect(const uint8_t* page, int32_t x, int32_t y, int32_t width, int32_t height, int32_t level) {
+        if (!enabled || width <= 0 || height <= 0) {
+            return;
+        }
+        s_surface* target = Page_Surface(page);
+        if (target == nullptr) {
+            return;
+        }
+        Flush_Pending();
+        const uint8_t* table = video::glass_remap_colors[level & 15];
+        const size_t stride = (size_t)target->width * S;
+        const int32_t x0 = SDL_max(x, 0);
+        const int32_t y0 = SDL_max(y, 0);
+        const int32_t x1 = SDL_min(x + width, target->width);
+        const int32_t y1 = SDL_min(y + height, target->height);
+        for (int32_t py = y0; py < y1; ++py) {
+            for (int32_t px = x0; px < x1; ++px) {
+                const size_t i = (size_t)py * target->width + px;
+                const uint16_t old = target->shadow[i];
+                // Only blocks that showed the pixel before the tint can be tinted; others settle.
+                if (old == SHADOW_NONE || table[old] != page[i]) {
+                    target->shadow[i] = SHADOW_NONE;
+                    continue;
+                }
+                target->shadow[i] = page[i];
+                uint32_t* block = Block(*target, px, py);
+                for (int32_t sy = 0; sy < S; ++sy) {
+                    for (int32_t sx = 0; sx < S; ++sx) {
+                        block[sy * stride + sx] = Glass_Tint(block[sy * stride + sx], level, 255u);
+                    }
+                }
+            }
+            Mark_Row(*target, py);
+        }
+    }
+
     void Stamp_Glass(const uint8_t* dst, uint8_t background_value, int32_t level) {
         (void)background_value;
         if (!enabled) {
