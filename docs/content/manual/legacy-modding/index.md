@@ -67,7 +67,7 @@ include ../orion2re.cfg;
 enable v150i;
 ```
 
-`--config <path>` selects any configuration file by its path below `data/`. A selected profile or configuration file must exist; the game reports an error instead of starting with defaults. Saved games and `ORION2RE.SET` are shared by all profiles, so a save made with one mod set may require that set to load.
+`--config <path>` selects any configuration file by its path below `data/`. A selected profile or configuration file must exist; the game reports an error instead of starting with defaults. Profiles share saved games and `ORION2RE.SET`. A saved game records the mods it was played with and restores that set when loaded, whichever profile is active, as long as those mods are still installed. The profile only selects the mods for new games.
 
 ## Mods that replace game data
 
