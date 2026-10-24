@@ -103,6 +103,10 @@ namespace hd_sprites {
         // ORION2RE_HD_STATS: count draws that had no HD art, by asset, and log them
         // periodically. Debug aid for finding coverage gaps.
         bool stats_enabled;
+        // ORION2RE_HD_TRACE: logs every LBX entry load and how long draws waited for their art.
+        bool trace_enabled;
+        uint64_t trace_wait_start;
+        size_t trace_wait_peak;
         std::unordered_map<const void*, std::string> stats_names;
         std::unordered_map<std::string, uint32_t> stats_missing;
         uint32_t stats_draws;
@@ -1347,6 +1351,7 @@ namespace hd_sprites {
         enabled = vfs::File_Exists("hd/pack.json") != 0;
         const char* stats = SDL_getenv("ORION2RE_HD_STATS");
         stats_enabled = enabled && stats != nullptr;
+        trace_enabled = enabled && SDL_getenv("ORION2RE_HD_TRACE") != nullptr;
         const char* debug = SDL_getenv("ORION2RE_HD_DEBUG");
         debug_sd = enabled && debug != nullptr && (strcmp(debug, "sd") == 0 || strcmp(debug, "stale") == 0);
         const char* capture = SDL_getenv("ORION2RE_HD_CAPTURE");
@@ -1429,6 +1434,14 @@ namespace hd_sprites {
         s_hd_asset* asset = assets[registration.asset];
         if (!asset->loaded) {
             Load_Asset(asset);
+        }
+        if (trace_enabled) {
+            int32_t ready = 0;
+            for (int32_t i = 0; i < asset->frame_count; ++i) {
+                ready += Frame_Ready(&asset->frames[i]) ? 1 : 0;
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd trace %llu load %s#%03d frames %d ready %d",
+                (unsigned long long)SDL_GetTicks(), lbx_name, (int)entry, asset->frame_count, ready);
         }
         if (!asset->has_source_hash || asset->source_hash == registration.data_hash) {
             Prefetch_Asset(asset);
@@ -2024,6 +2037,17 @@ namespace hd_sprites {
         }
         s_scoped_timer timer(TIMER_PUBLISH);
         Upgrade_Deferred();
+        if (trace_enabled) {
+            if (!deferred.empty()) {
+                trace_wait_start = trace_wait_start != 0 ? trace_wait_start : SDL_GetTicks();
+                trace_wait_peak = SDL_max(trace_wait_peak, deferred.size());
+            } else if (trace_wait_start != 0) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd trace %llu waited %llu ms for art (%d draws at most)",
+                    (unsigned long long)SDL_GetTicks(), (unsigned long long)(SDL_GetTicks() - trace_wait_start), (int)trace_wait_peak);
+                trace_wait_start = 0;
+                trace_wait_peak = 0;
+            }
+        }
         publish_count++;
         Evict_Over_Budget();
         // Settle pixels changed by code without hooks: the original pixel, enlarged.
