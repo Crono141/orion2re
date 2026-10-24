@@ -1033,11 +1033,26 @@ namespace platform {
                 !Ensure_Cursor_Surface()) {
                 return;
             }
-            SDL_Texture* cursor = SDL_CreateTextureFromSurface(g_sdl_renderer, g_sdl_cursor_surface);
-            if (cursor == nullptr) {
-                return;
+            // HD cursor art (looked up by the cursor image's fingerprint), else the original.
+            static uint32_t hd_cursor[k_cursor_dimension * HD_SPRITES_SCALE * k_cursor_dimension * HD_SPRITES_SCALE];
+            SDL_Texture* cursor = nullptr;
+            if (hd_sprites::Enabled() &&
+                hd_sprites::Cursor_Art(cursor_state.pixels, k_cursor_dimension, g_present_palette_entries, hd_cursor)) {
+                const int32_t size = k_cursor_dimension * HD_SPRITES_SCALE;
+                cursor = SDL_CreateTexture(g_sdl_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, size, size);
+                if (cursor != nullptr) {
+                    (void)SDL_UpdateTexture(cursor, nullptr, hd_cursor, size * (int32_t)sizeof(uint32_t));
+                    (void)SDL_SetTextureBlendMode(cursor, SDL_BLENDMODE_BLEND);
+                    (void)SDL_SetTextureScaleMode(cursor, SDL_SCALEMODE_LINEAR);
+                }
             }
-            (void)SDL_SetTextureScaleMode(cursor, SDL_SCALEMODE_PIXELART);
+            if (cursor == nullptr) {
+                cursor = SDL_CreateTextureFromSurface(g_sdl_renderer, g_sdl_cursor_surface);
+                if (cursor == nullptr) {
+                    return;
+                }
+                (void)SDL_SetTextureScaleMode(cursor, SDL_SCALEMODE_PIXELART);
+            }
             const SDL_FRect destination = {(float)SDL_GetAtomicInt(&g_present_mouse_x),
                 (float)SDL_GetAtomicInt(&g_present_mouse_y), (float)k_cursor_dimension, (float)k_cursor_dimension};
             SDL_RenderTexture(g_sdl_renderer, cursor, nullptr, &destination);
