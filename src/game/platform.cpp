@@ -78,8 +78,9 @@ namespace platform {
         bool Ensure_Render_Presentation();
         bool Ensure_Scaler_Output();
         void Destroy_Scaler_Output();
-        void Present_Texture_To_Output(SDL_Texture* texture);
+        void Present_Texture_To_Output(SDL_Texture* texture, bool draw_cursor = false);
         void Save_Pending_Screenshot();
+        void Render_Cursor_Overlay();
         void Apply_Pending_Cursor_State();
         void Blit_Cursor_On_Present_Surface();
         void Sync_Mouse_State_From_SDL();
@@ -432,7 +433,7 @@ namespace platform {
             return true;
         }
 
-        void Present_Texture_To_Output(SDL_Texture* texture) {
+        void Present_Texture_To_Output(SDL_Texture* texture, bool draw_cursor) {
             if (g_sdl_renderer == nullptr || texture == nullptr) {
                 return;
             }
@@ -446,6 +447,9 @@ namespace platform {
 
             SDL_RenderClear(g_sdl_renderer);
             SDL_RenderTexture(g_sdl_renderer, texture, nullptr, nullptr);
+            if (draw_cursor) {
+                Render_Cursor_Overlay();
+            }
             debug_overlay::Render_Published_Frame(g_sdl_renderer, g_present_generation);
             Save_Pending_Screenshot();
             SDL_RenderPresent(g_sdl_renderer);
@@ -896,6 +900,72 @@ namespace platform {
             (void)SDL_SetPaletteColors(g_sdl_present_palette, colors, 0, 256);
         }
 
+        // HD presentation: the 4x HD surface of the presented page, coloured with its palette.
+        SDL_Texture* g_hd_texture;
+        uint32_t* g_hd_pixels;
+        // False until the HD texture holds a complete frame (first frame, failed upload, window
+        // exposed or renderer reset).
+        bool g_hd_frame_valid;
+
+        bool Present_HD_Frame() {
+            const int32_t width = video::g_screen_res_x * HD_SPRITES_SCALE;
+            const int32_t height = video::g_screen_res_y * HD_SPRITES_SCALE;
+            if (g_hd_texture == nullptr) {
+                g_hd_texture = SDL_CreateTexture(g_sdl_renderer, SDL_PIXELFORMAT_ARGB8888,
+                    SDL_TEXTUREACCESS_STREAMING, width, height);
+                g_hd_pixels = (uint32_t*)calloc((size_t)width * (size_t)height, sizeof(uint32_t));
+                if (g_hd_texture == nullptr || g_hd_pixels == nullptr) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: unable to create the HD frame: %s", SDL_GetError());
+                    return false;
+                }
+                (void)SDL_SetTextureScaleMode(g_hd_texture, SDL_SCALEMODE_LINEAR);
+            }
+
+            // The HD surface rows that changed since the last present, in the presented palette
+            // (everything when the palette changed).
+            const uint64_t resolve_start = SDL_GetPerformanceCounter();
+            int32_t row_first = 0;
+            int32_t row_last = 0;
+            const bool changed = hd_sprites::Resolve(g_present_palette_entries, g_hd_pixels, &row_first, &row_last);
+            static double resolve_ms_total;
+            static uint32_t resolve_count;
+            resolve_ms_total += (double)(SDL_GetPerformanceCounter() - resolve_start) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+            if (++resolve_count % 200 == 0 && SDL_getenv("ORION2RE_HD_STATS") != nullptr) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: resolve %.2f ms average over %u frames",
+                    resolve_ms_total / resolve_count, resolve_count);
+            }
+
+            // Debug aid for headless runs: ORION2RE_HD_DUMP=<directory> saves every 50th
+            // presented HD frame as a BMP.
+            static uint32_t hd_frame_counter;
+            const char* dump_dir = SDL_getenv("ORION2RE_HD_DUMP");
+            if (dump_dir != nullptr && (hd_frame_counter++ % 50) == 0) {
+                SDL_Surface* dump = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_ARGB8888,
+                    g_hd_pixels, width * (int32_t)sizeof(uint32_t));
+                char path[512];
+                snprintf(path, sizeof(path), "%s/hd_%05u.bmp", dump_dir, hd_frame_counter);
+                if (dump != nullptr) {
+                    (void)SDL_SaveBMP(dump, path);
+                    SDL_DestroySurface(dump);
+                }
+            }
+            bool uploaded = true;
+            if (!g_hd_frame_valid) {
+                uploaded = SDL_UpdateTexture(g_hd_texture, nullptr, g_hd_pixels, width * (int32_t)sizeof(uint32_t));
+            } else if (changed) {
+                const SDL_Rect area = {0, row_first, width, row_last - row_first};
+                uploaded = SDL_UpdateTexture(g_hd_texture, &area, g_hd_pixels + (size_t)row_first * width,
+                    width * (int32_t)sizeof(uint32_t));
+            }
+            if (!uploaded) {
+                g_hd_frame_valid = false;
+                return false;
+            }
+            g_hd_frame_valid = true;
+            Present_Texture_To_Output(g_hd_texture, true);
+            return true;
+        }
+
         void Present_Indexed_Buffer(const uint8_t* src_pixels) {
             if (src_pixels == nullptr || !Ensure_Present_Backend()) {
                 return;
@@ -906,11 +976,17 @@ namespace platform {
                 return;
             }
 
-            Blit_Cursor_On_Present_Surface();
+            if (!hd_sprites::Enabled()) {
+                Blit_Cursor_On_Present_Surface();
+            }
             if (!scalers::Process(
                     &g_present_scaler_pipeline,
                     g_sdl_present_pixels,
                     video::g_screen_res_x)) {
+                return;
+            }
+
+            if (hd_sprites::Enabled() && Present_HD_Frame()) {
                 return;
             }
 
@@ -945,6 +1021,44 @@ namespace platform {
             }
 
             Present_Texture_To_Output(g_sdl_present_texture);
+        }
+
+        // With HD sprites the cursor is drawn as its own texture over the composed frame, so the
+        // area under it is not left on the low-resolution base image.
+        void Render_Cursor_Overlay() {
+            if (g_sdl_renderer == nullptr || debug_overlay::Visible()) {
+                return;
+            }
+            Apply_Pending_Cursor_State();
+            const s_present_cursor_state& cursor_state = g_active_cursor_state;
+            if (cursor_state.pixels == nullptr || cursor_state.enabled == 0 || cursor_state.shape <= 0 ||
+                !Ensure_Cursor_Surface()) {
+                return;
+            }
+            // HD cursor art (looked up by the cursor image's fingerprint), else the original.
+            static uint32_t hd_cursor[k_cursor_dimension * HD_SPRITES_SCALE * k_cursor_dimension * HD_SPRITES_SCALE];
+            SDL_Texture* cursor = nullptr;
+            if (hd_sprites::Enabled() &&
+                hd_sprites::Cursor_Art(cursor_state.pixels, k_cursor_dimension, g_present_palette_entries, hd_cursor)) {
+                const int32_t size = k_cursor_dimension * HD_SPRITES_SCALE;
+                cursor = SDL_CreateTexture(g_sdl_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, size, size);
+                if (cursor != nullptr) {
+                    (void)SDL_UpdateTexture(cursor, nullptr, hd_cursor, size * (int32_t)sizeof(uint32_t));
+                    (void)SDL_SetTextureBlendMode(cursor, SDL_BLENDMODE_BLEND);
+                    (void)SDL_SetTextureScaleMode(cursor, SDL_SCALEMODE_LINEAR);
+                }
+            }
+            if (cursor == nullptr) {
+                cursor = SDL_CreateTextureFromSurface(g_sdl_renderer, g_sdl_cursor_surface);
+                if (cursor == nullptr) {
+                    return;
+                }
+                (void)SDL_SetTextureScaleMode(cursor, SDL_SCALEMODE_PIXELART);
+            }
+            const SDL_FRect destination = {(float)SDL_GetAtomicInt(&g_present_mouse_x),
+                (float)SDL_GetAtomicInt(&g_present_mouse_y), (float)k_cursor_dimension, (float)k_cursor_dimension};
+            SDL_RenderTexture(g_sdl_renderer, cursor, nullptr, &destination);
+            SDL_DestroyTexture(cursor);
         }
 
         void Blit_Cursor_On_Present_Surface() {
@@ -1216,6 +1330,8 @@ namespace platform {
     }
 
     void Cleanup_Surfaces() {
+        // HD art decoding threads use SDL; they must finish before SDL shuts down.
+        hd_sprites::Shutdown();
         Destroy_Present_Backend();
 
         uint8_t* const primary_cursor_surface = g_cursor_surface_1;
@@ -1419,7 +1535,10 @@ namespace platform {
                 event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED ||
                 event.type == SDL_EVENT_WINDOW_RESTORED ||
                 event.type == SDL_EVENT_WINDOW_MAXIMIZED ||
-                event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
+                event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED ||
+                event.type == SDL_EVENT_RENDER_TARGETS_RESET ||
+                event.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+                g_hd_frame_valid = false;
                 Queue_Debug_Overlay_Display_Size();
                 Request_Present_Refresh();
                 continue;
@@ -1569,6 +1688,7 @@ namespace platform {
         for (int32_t y = 0; y < video::g_screen_res_y; ++y) {
             memcpy(dst + y * video::g_screen_res_x, src + y * video::g_screen_res_x, (size_t)video::g_screen_res_x);
         }
+        hd_sprites::Snapshot_Plane();
     }
 
     void Force_Cursor_Pos(int16_t x, int16_t y) {

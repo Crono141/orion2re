@@ -55,6 +55,8 @@
 #include "map_scale.h"
 #include "harold.h"
 #include "sound.h"
+#include "hd_sprites.h"
+#include "hd_video.h"
 #include "fields.h"
 #include "fieldsav.h"
 #include "firepts.h"
