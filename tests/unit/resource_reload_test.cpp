@@ -377,7 +377,8 @@ DOCTEST_TEST_CASE("successful file save load requests resource reload even when 
     std::vector<uint8_t> bytes(SAVEGAME::BUFFER_CAPACITY);
     SERIAL::Writer_ writer(bytes.data(), (uint32_t)bytes.size(), "test save overflow");
     std::string error;
-    const bool written = SAVEGAME::Write_Game(&writer, "resource lifecycle", 123, &error);
+    const char description[sizeof(SAVEGAME::s_metadata::description)] = "resource lifecycle";
+    const bool written = SAVEGAME::Write_Game(&writer, description, 123, &error);
     DOCTEST_INFO(error);
     DOCTEST_REQUIRE(written);
     fixture.Write("SAVE1.GAM", std::string((char*)bytes.data(), writer.Length()));

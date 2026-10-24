@@ -72,14 +72,15 @@ DOCTEST_TEST_CASE_FIXTURE(Ground_Combat_Fixture, "ground combat reconciles skipp
     for (int side = 0; side < 2; ++side) {
         DOCTEST_CHECK(Living_Units(side, 1) == 2);
         DOCTEST_CHECK(Living_Units(side, 2) == 2);
-        DOCTEST_CHECK(sides[side].unit_counts[1] == 2);
-        DOCTEST_CHECK(sides[side].unit_counts[2] == 2);
-        DOCTEST_CHECK(sides[side].round_killed_unit_type == -1);
-        DOCTEST_CHECK(sides[side].round_hit_unit_type == -1);
-        DOCTEST_CHECK(COLGCBT::g_units[side][0].state == 1);
-        DOCTEST_CHECK(COLGCBT::g_units[side][0].anim_frame == 0);
-        DOCTEST_CHECK(COLGCBT::g_units[side][0].is_hit == 0);
-        DOCTEST_CHECK(COLGCBT::g_units[side][0].target == nullptr);
+        // Packed fields must not be bound to references by doctest decomposition.
+        DOCTEST_CHECK((sides[side].unit_counts[1] == 2));
+        DOCTEST_CHECK((sides[side].unit_counts[2] == 2));
+        DOCTEST_CHECK((sides[side].round_killed_unit_type == -1));
+        DOCTEST_CHECK((sides[side].round_hit_unit_type == -1));
+        DOCTEST_CHECK((COLGCBT::g_units[side][0].state == 1));
+        DOCTEST_CHECK((COLGCBT::g_units[side][0].anim_frame == 0));
+        DOCTEST_CHECK((COLGCBT::g_units[side][0].is_hit == 0));
+        DOCTEST_CHECK((COLGCBT::g_units[side][0].target == nullptr));
     }
     DOCTEST_CHECK(COLONY::full_draw == 1);
 
@@ -87,7 +88,7 @@ DOCTEST_TEST_CASE_FIXTURE(Ground_Combat_Fixture, "ground combat reconciles skipp
     COLONY::full_draw = 0;
     COLGCBT::Verify_Legal_Totals();
     DOCTEST_CHECK(Living_Units(0, 1) == 2);
-    DOCTEST_CHECK(COLGCBT::g_units[0][0].anim_frame == 3);
+    DOCTEST_CHECK((COLGCBT::g_units[0][0].anim_frame == 3));
     DOCTEST_CHECK(COLONY::full_draw == 0);
 }
 
@@ -102,9 +103,9 @@ DOCTEST_TEST_CASE_FIXTURE(Ground_Combat_Fixture, "ground combat excludes dying s
     COLGCBT::Verify_Legal_Totals();
 
     DOCTEST_CHECK(Living_Units(1, 1) == 2);
-    DOCTEST_CHECK(dying.state == 1);
-    DOCTEST_CHECK(dying.anim_frame == 3);
-    DOCTEST_CHECK(dying.is_hit == 1);
+    DOCTEST_CHECK((dying.state == 1));
+    DOCTEST_CHECK((dying.anim_frame == 3));
+    DOCTEST_CHECK((dying.is_hit == 1));
     DOCTEST_CHECK(COLONY::full_draw == 0);
 }
 
@@ -116,7 +117,7 @@ DOCTEST_TEST_CASE_FIXTURE(Ground_Combat_Fixture, "ground combat preserves pendin
     COLGCBT::Verify_Legal_Totals();
 
     DOCTEST_CHECK(Living_Units(0, 1) == 10);
-    DOCTEST_CHECK(sides[0].round_killed_unit_type == 1);
+    DOCTEST_CHECK((sides[0].round_killed_unit_type == 1));
     DOCTEST_CHECK(COLONY::full_draw == 0);
 }
 

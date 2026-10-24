@@ -31,10 +31,11 @@ DOCTEST_TEST_CASE("monster planet updates retain explicit report state") {
     EVENTS::Event_Monster_Update(NONPLAYER_SHIP_TYPE_AMOEBA, 3, -1);
 
     const s_event_data& event = EVENTS::event_data[EVENT_SPACE_AMOEBA];
-    DOCTEST_CHECK(event.status == 4);
-    DOCTEST_CHECK(event.target_id == 3);
-    DOCTEST_CHECK(event.max_amount == 2);
-    DOCTEST_CHECK(event.player_idx == 4);
+    // Evaluate packed-field comparisons before doctest can bind operand references.
+    DOCTEST_CHECK((event.status == 4));
+    DOCTEST_CHECK((event.target_id == 3));
+    DOCTEST_CHECK((event.max_amount == 2));
+    DOCTEST_CHECK((event.player_idx == 4));
 }
 
 DOCTEST_TEST_CASE("monster death updates retain completion payload") {
@@ -43,9 +44,9 @@ DOCTEST_TEST_CASE("monster death updates retain completion payload") {
     EVENTS::Event_Monster_Update(NONPLAYER_SHIP_TYPE_HYDRA, -1, 2);
 
     const s_event_data& event = EVENTS::event_data[EVENT_SPACE_HYDRA];
-    DOCTEST_CHECK(event.status == 4);
-    DOCTEST_CHECK(event.player_idx == 2);
-    DOCTEST_CHECK(event.amount == 2);
+    DOCTEST_CHECK((event.status == 4));
+    DOCTEST_CHECK((event.player_idx == 2));
+    DOCTEST_CHECK((event.amount == 2));
 }
 
 DOCTEST_TEST_CASE("monster reports use preserved planet identity safely") {
@@ -115,7 +116,7 @@ DOCTEST_TEST_CASE("planet event reports preserve vanilla and v150 location token
 
         snprintf(message, sizeof(message), patched ? patched_expected : vanilla_expected, patched ? "Planet 193" : "Gnol");
         DOCTEST_CHECK(strcmp(EVENTS::event_message, message) == 0);
-        DOCTEST_CHECK(event.target_id == 193);
+        DOCTEST_CHECK((event.target_id == 193));
     }
     MOX::mineral_class_string[MINERAL_RESOURCE_ULTRA_RICH] = nullptr;
 }
@@ -178,11 +179,11 @@ DOCTEST_TEST_CASE("Computer Virus preserves unsigned configuration values") {
 
         EVENTS::Event_Twiddle();
 
-        DOCTEST_CHECK(event.target_id == test_case.expected_loss);
-        DOCTEST_CHECK(event.amount == 3);
+        DOCTEST_CHECK((event.target_id == test_case.expected_loss));
+        DOCTEST_CHECK((event.amount == 3));
         DOCTEST_CHECK((MOX::player[0].research_accumulated ==
             test_case.expected_research));
-        DOCTEST_CHECK(event.status == 5);
+        DOCTEST_CHECK((event.status == 5));
     }
 }
 
@@ -245,14 +246,14 @@ DOCTEST_TEST_CASE("failed Supernova resets planet environment before destruction
 
     EVENTS::Event_Twiddle();
 
-    DOCTEST_CHECK(event.status == 5);
+    DOCTEST_CHECK((event.status == 5));
     for (int planet_idx = 0; planet_idx < 2; ++planet_idx) {
-        DOCTEST_CHECK(MOX::planet[planet_idx].climate == PLANET_CLIMATE_RADIATED);
-        DOCTEST_CHECK(MOX::planet[planet_idx].environmental_alterations == 0);
-        DOCTEST_CHECK(MOX::planet[planet_idx].food_per_farmer == 7);
+        DOCTEST_CHECK((MOX::planet[planet_idx].climate == PLANET_CLIMATE_RADIATED));
+        DOCTEST_CHECK((MOX::planet[planet_idx].environmental_alterations == 0));
+        DOCTEST_CHECK((MOX::planet[planet_idx].food_per_farmer == 7));
     }
-    DOCTEST_CHECK(MOX::planet[0].colony_index == -1);
-    DOCTEST_CHECK(MOX::colony[0].owner == -1);
+    DOCTEST_CHECK((MOX::planet[0].colony_index == -1));
+    DOCTEST_CHECK((MOX::colony[0].owner == -1));
 }
 
 DOCTEST_TEST_CASE("Antaran victim weights use widened Lucky division") {
