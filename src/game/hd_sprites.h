@@ -115,6 +115,11 @@ namespace hd_sprites {
     // changed rows to the published surface.
     void Publish_Plane(const uint8_t* published_page_pixels);
 
+    // HD art for the mouse cursor image `pixels` (size x size palette indices, 0 = transparent),
+    // looked up by its fingerprint under hd/CURSORS/. Writes (size*4)^2 ARGB pixels coloured
+    // with `palette`; false when there is no art for this cursor.
+    bool Cursor_Art(const uint8_t* pixels, int32_t size, const video::s_palette_color* palette, uint32_t* argb);
+
     // Presenter side: copies the published HD rows for presenting. Call it together with the
     // copy of the published page, while the game thread cannot publish a newer frame.
     void Snapshot_Plane();

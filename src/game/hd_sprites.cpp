@@ -2014,6 +2014,45 @@ namespace hd_sprites {
         present_fade = published_fade;
     }
 
+    bool Cursor_Art(const uint8_t* pixels, int32_t size, const video::s_palette_color* palette, uint32_t* argb) {
+        static std::unordered_map<uint32_t, s_hd_frame*> cursors;
+        if (!enabled || pixels == nullptr || size <= 0) {
+            return false;
+        }
+        uint32_t hash = 2166136261u;
+        for (int32_t i = 0; i < size * size; ++i) {
+            hash = (hash ^ pixels[i]) * 16777619u;
+        }
+        auto found = cursors.find(hash);
+        if (found == cursors.end()) {
+            // Small and rare: loaded synchronously on the presenter, through the VFS lock-free
+            // path only when the file is on disk (the VFS is not thread safe).
+            s_hd_frame* frame = new s_hd_frame();
+            char path[64];
+            snprintf(path, sizeof(path), "hd/CURSORS/%08x.png", hash);
+            char disk[1024];
+            size_t bytes_size = 0;
+            void* bytes = vfs::Resolve_Read_Path_No_Zip(path, disk, sizeof(disk)) != 0 ? SDL_LoadFile(disk, &bytes_size) : nullptr;
+            const bool ok = bytes != nullptr && Decode_Frame_Bytes((const uint8_t*)bytes, bytes_size, path, frame) &&
+                frame->index != nullptr && frame->width == size * S && frame->height == size * S;
+            SDL_free(bytes);
+            if (!ok) {
+                delete frame;
+                frame = nullptr;
+            }
+            found = cursors.emplace(hash, frame).first;
+        }
+        const s_hd_frame* frame = found->second;
+        if (frame == nullptr) {
+            return false;
+        }
+        for (int32_t i = 0; i < frame->width * frame->height; ++i) {
+            const video::s_palette_color& c = palette[frame->index[i]];
+            argb[i] = ((uint32_t)frame->alpha[i] << 24) | ((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | c.b;
+        }
+        return true;
+    }
+
     bool Resolve(const video::s_palette_color* palette, uint32_t* output, int32_t* row_first, int32_t* row_last) {
         static uint32_t last_palette[256];
         static uint32_t last_fade = 0xFFFFFFFFu;
