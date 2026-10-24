@@ -49,6 +49,12 @@ namespace hd_video {
             std::map<int32_t, std::vector<uint8_t>> decoded; // empty vector: failed
             bool stop = false;
             std::vector<std::thread> workers;
+
+            // Logged when the video closes.
+            int32_t frames_hd = 0;
+            int32_t frames_sd = 0;
+            int32_t between_shown = 0;
+            int32_t between_skipped = 0;
         };
 
         s_state state;
@@ -203,6 +209,7 @@ namespace hd_video {
         state.hd_count = (int32_t)hd_frames;
         state.requested = 0;
         state.shown = -1;
+        state.frames_hd = state.frames_sd = state.between_shown = state.between_skipped = 0;
         state.stop = false;
         state.active = true;
         static bool exit_registered;
@@ -229,8 +236,10 @@ namespace hd_video {
         state.top = top;
         if (rgb == nullptr) {
             state.shown = -1;
+            state.frames_sd++;
             return;
         }
+        state.frames_hd++;
         hd_sprites::Literal_Rect((const uint8_t*)video::g_page_off.pixels, left, top, state.width, state.height, rgb->data());
         state.shown = frame;
         if (state.ratio > 1) {
@@ -246,13 +255,16 @@ namespace hd_video {
         state.shown = -1;
         const uint64_t due = next_frame_ns - frame_duration_ns / 2;
         if (SDL_GetTicksNS() >= due || index >= state.hd_count) {
-            return; // running late: skip the in-between frame
+            state.between_skipped++; // running late
+            return;
         }
         Request_Up_To(index + LOOKAHEAD);
         const std::vector<uint8_t>* rgb = Take_Frame(index, due);
         if (rgb == nullptr) {
+            state.between_skipped++;
             return;
         }
+        state.between_shown++;
         const uint64_t now = SDL_GetTicksNS();
         if (now < due) {
             SDL_DelayNS(due - now);
@@ -278,6 +290,8 @@ namespace hd_video {
             worker.join();
         }
         state.workers.clear();
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd: %s closed: %d frames in HD, %d without art; %d in-between frames shown, %d skipped",
+            state.directory.c_str(), state.frames_hd, state.frames_sd, state.between_shown, state.between_skipped);
         state.decoded.clear();
         state.shown_pixels.clear();
         state.active = false;
