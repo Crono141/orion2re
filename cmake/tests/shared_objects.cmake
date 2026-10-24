@@ -10,6 +10,8 @@ target_include_directories(orion2re_test_compile_settings INTERFACE
 target_link_libraries(orion2re_test_compile_settings INTERFACE
     SDL3::Headers uv_a orion2re_lz4 orion2re_lua miniz
 )
+# stream_source.cpp includes stb_vorbis.c (decoder for Ogg music entries).
+target_link_libraries(orion2re_test_compile_settings INTERFACE orion2re_stb_vorbis)
 if(ORION2RE_ENABLE_ASAN)
     target_compile_options(orion2re_test_compile_settings INTERFACE
         ${ORION2RE_SANITIZER_COMPILE_OPTIONS})
