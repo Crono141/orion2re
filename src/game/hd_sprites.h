@@ -98,6 +98,11 @@ namespace hd_sprites {
     // (graphics::Tint_Fill): its HD pixels are tinted the same way in true colour.
     void Tint_Rect(const uint8_t* page, int32_t x, int32_t y, int32_t width, int32_t height, int32_t level);
 
+    // Full-colour pixels replace the HD pixels of the rectangle (x, y, width, height) of `page`,
+    // whose page pixels were just written (HD video frames). `rgb` holds (width*4) x (height*4)
+    // pixels, 3 bytes each.
+    void Literal_Rect(const uint8_t* page, int32_t x, int32_t y, int32_t width, int32_t height, const uint8_t* rgb);
+
     // Like Stamp_Run, for pixels written to an explicit page (draws that write the back page
     // directly) instead of the current video page.
     void Stamp_Page(const uint8_t* page, const uint8_t* dst, int32_t count);

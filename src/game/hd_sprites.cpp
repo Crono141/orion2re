@@ -1597,6 +1597,39 @@ namespace hd_sprites {
         Stamp_Page(video::current_video_page, dst, count);
     }
 
+    void Literal_Rect(const uint8_t* page, int32_t x, int32_t y, int32_t width, int32_t height, const uint8_t* rgb) {
+        if (!enabled || rgb == nullptr || width <= 0 || height <= 0) {
+            return;
+        }
+        s_surface* target = Page_Surface(page);
+        if (target == nullptr) {
+            return;
+        }
+        Flush_Pending();
+        const size_t stride = (size_t)target->width * S;
+        const size_t rgb_stride = (size_t)width * S * 3;
+        const int32_t x0 = SDL_max(x, 0);
+        const int32_t y0 = SDL_max(y, 0);
+        const int32_t x1 = SDL_min(x + width, target->width);
+        const int32_t y1 = SDL_min(y + height, target->height);
+        for (int32_t py = y0; py < y1; ++py) {
+            for (int32_t px = x0; px < x1; ++px) {
+                const size_t i = (size_t)py * target->width + px;
+                // The block belongs to the page value just written, so settling keeps it.
+                target->shadow[i] = page[i];
+                uint32_t* block = Block(*target, px, py);
+                const uint8_t* source = rgb + (size_t)(py - y) * S * rgb_stride + (size_t)(px - x) * S * 3;
+                for (int32_t sy = 0; sy < S; ++sy) {
+                    const uint8_t* in = source + (size_t)sy * rgb_stride;
+                    for (int32_t sx = 0; sx < S; ++sx, in += 3) {
+                        block[sy * stride + sx] = Literal(((uint32_t)in[0] << 16) | ((uint32_t)in[1] << 8) | in[2]);
+                    }
+                }
+            }
+            Mark_Row(*target, py);
+        }
+    }
+
     void Stamp_Page(const uint8_t* page, const uint8_t* dst, int32_t count) {
         if (!enabled || count <= 0) {
             return;
