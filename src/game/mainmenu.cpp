@@ -11,6 +11,7 @@ namespace MAINMENU {
     s_animation_header* mainmenu_first_seg;
     s_animation_header* mainmenu_last_seg;
     void* _gametype;
+    int16_t autoload_save_slot = -1;
     int16_t max_credits;
     int32_t credit_count;
     int16_t credits_font_style;
@@ -708,9 +709,11 @@ namespace MAINMENU {
             MOX::scanned_field = fields::Scan_Input();
             timer::Mark_Time();
 
-            // Continue (Load Game 9)
-            if (input_field == mainmenu->fields[MAIN_MENU_BTN_CONTINUE].field || (last_input_scan == 0x43 && mainmenu->fields[MAIN_MENU_BTN_CONTINUE].field != -1000)) {
-                if (FILEDEF::Load_Game(9) != 0) {
+            // Continue (Load Game 9), or the save requested with --load-save.
+            const int16_t autoload_slot = autoload_save_slot;
+            autoload_save_slot = -1;
+            if (autoload_slot >= 0 || input_field == mainmenu->fields[MAIN_MENU_BTN_CONTINUE].field || (last_input_scan == 0x43 && mainmenu->fields[MAIN_MENU_BTN_CONTINUE].field != -1000)) {
+                if (FILEDEF::Load_Game(autoload_slot >= 0 ? autoload_slot : 9) != 0) {
                     if (MOX::game_type != 2 && MOX::game_type != 3) {
                         MOX::current_screen = (MOX::game_type == 1) ? SCREEN_HOTSEAT_SELECT_PLAYER : SCREEN_REPORTS;
                     } else {

@@ -9,6 +9,7 @@
 #endif
 
 #include "config/config_loader.h"
+#include "config/startup_options.h"
 #include "lua/lua_mod_runtime.h"
 
 #if defined(_WIN32)
@@ -173,6 +174,19 @@ int main(int argc, char** argv) {
     Configure_Sanitizer_Runtime_();
 #endif
 
+    config::s_startup_options startup_options;
+    std::string startup_error;
+    if (!config::Parse_Startup_Options(argc, argv, &startup_options, &startup_error)) {
+        SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "main: %s", startup_error.c_str());
+        Show_Message_Box(nullptr, startup_error.c_str(), "Orion2 Redone", true);
+        Shutdown_Game_Log_();
+        return -1;
+    }
+
+    MOX2::skip_intro = startup_options.skip_intro ? 1 : 0;
+    MOX2::quiet_exit = startup_options.no_exit_message ? 1 : 0;
+    MAINMENU::autoload_save_slot = (int16_t)(startup_options.load_save - 1);
+
     const char* base_path = SDL_GetBasePath();
 #if defined(__APPLE__)
     char executable_path[PATH_MAX];
@@ -209,12 +223,18 @@ int main(int argc, char** argv) {
         return -1;
     }
 
+    const char* startup_config_path = startup_options.config_path.c_str();
     config::s_effective_config effective_config;
     config::s_cfg_diagnostic config_diagnostic;
     bool config_loaded = false;
-    if (!config::Load_Startup_Config("orion2re.cfg", "base_game", &effective_config, &config_loaded, &config_diagnostic)) {
+    if (startup_options.config_selected && vfs::File_Exists(startup_config_path) == 0) {
+        config_diagnostic.location.source = startup_options.config_path;
+        config_diagnostic.message = "selected startup configuration not found";
+    }
+    if (!config_diagnostic.message.empty() ||
+        !config::Load_Startup_Config(startup_config_path, "base_game", &effective_config, &config_loaded, &config_diagnostic)) {
         char config_error[2048];
-        snprintf(config_error, sizeof(config_error), "Failed to load configuration:\n%s:%u:%u: %s", config_diagnostic.location.source.empty() ? "orion2re.cfg" : config_diagnostic.location.source.c_str(), config_diagnostic.location.line, config_diagnostic.location.column, config_diagnostic.message.c_str());
+        snprintf(config_error, sizeof(config_error), "Failed to load configuration:\n%s:%u:%u: %s", config_diagnostic.location.source.empty() ? startup_config_path : config_diagnostic.location.source.c_str(), config_diagnostic.location.line, config_diagnostic.location.column, config_diagnostic.message.c_str());
         SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "%s", config_error);
         Show_Message_Box(nullptr, config_error, "Orion2 Redone", true);
         orion2re::lua::Shutdown_Lua();
@@ -228,48 +248,11 @@ int main(int argc, char** argv) {
         return -1;
     }
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-        config_loaded ? "configuration: loaded orion2re.cfg" : "configuration: orion2re.cfg not found; using defaults");
+        config_loaded ? "configuration: loaded %s" : "configuration: %s not found; using defaults",
+        startup_config_path);
 
-    size_t command_line_length = 0;
-    for (int i = 1; i < argc; ++i) {
-        command_line_length += strlen(argv[i]);
-        if (i + 1 < argc) {
-            ++command_line_length;
-        }
-    }
-
-    char* command_line = nullptr;
-    if (command_line_length != 0) {
-        command_line = (char*)malloc(command_line_length + 1);
-        if (command_line == nullptr) {
-            orion2re::lua::Shutdown_Lua();
-            config::Shutdown_Config_Loader();
-            config::Shutdown_Runtime();
-            vfs::Shutdown();
-            if (current_directory != nullptr) {
-                SDL_free(current_directory);
-            }
-            Shutdown_Game_Log_();
-            return -1;
-        }
-
-        size_t write_offset = 0;
-        for (int i = 1; i < argc; ++i) {
-            const size_t arg_length = strlen(argv[i]);
-            memcpy(command_line + write_offset, argv[i], arg_length);
-            write_offset += arg_length;
-
-            if (i + 1 < argc) {
-                command_line[write_offset++] = ' ';
-            }
-        }
-        command_line[write_offset] = '\0';
-    }
-
-    const int result = platform::Run_Main_Loop(command_line);
-    if (command_line != nullptr) {
-        free(command_line);
-    }
+    const int result = platform::Run_Main_Loop(
+        startup_options.remaining_command_line.empty() ? nullptr : startup_options.remaining_command_line.c_str());
 
     orion2re::lua::Shutdown_Lua();
     ai_state::Shutdown();
