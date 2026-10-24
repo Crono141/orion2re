@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "webp/decode.h"
 #include "yyjson.h"
 
 namespace hd_sprites {
@@ -255,6 +256,50 @@ namespace hd_sprites {
             return true;
         }
 
+        // Decodes a WebP frame (full-colour art) into the frame's planes.
+        bool Decode_Webp(const uint8_t* bytes, size_t size, const std::string& name, s_hd_frame* frame) {
+            int width = 0;
+            int height = 0;
+            uint8_t* rgba = WebPDecodeRGBA(bytes, size, &width, &height);
+            if (rgba == nullptr) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: unable to decode %s", name.c_str());
+                return false;
+            }
+            if (width != frame->width || height != frame->height) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "hd: %s is %dx%d, sprite.json says %dx%d", name.c_str(), width, height, frame->width, frame->height);
+                WebPFree(rgba);
+                return false;
+            }
+            const size_t count = (size_t)width * (size_t)height;
+            uint8_t* rgb = (uint8_t*)malloc(count * 3);
+            uint8_t* alpha = (uint8_t*)malloc(count);
+            if (rgb == nullptr || alpha == nullptr) {
+                free(rgb);
+                free(alpha);
+                WebPFree(rgba);
+                return false;
+            }
+            for (size_t i = 0; i < count; ++i) {
+                rgb[i * 3 + 0] = rgba[i * 4 + 0];
+                rgb[i * 3 + 1] = rgba[i * 4 + 1];
+                rgb[i * 3 + 2] = rgba[i * 4 + 2];
+                alpha[i] = rgba[i * 4 + 3];
+            }
+            WebPFree(rgba);
+            frame->full_colour = true;
+            frame->rgb = rgb;
+            frame->alpha = alpha;
+            return true;
+        }
+
+        // A frame file's bytes: WebP (by signature) or PNG.
+        bool Decode_Frame_Bytes(const uint8_t* bytes, size_t size, const std::string& name, s_hd_frame* frame) {
+            if (size >= 12 && memcmp(bytes, "RIFF", 4) == 0 && memcmp(bytes + 8, "WEBP", 4) == 0) {
+                return Decode_Webp(bytes, size, name, frame);
+            }
+            return Decode_Png(SDL_IOFromConstMem(bytes, size), name, frame);
+        }
+
         // Synchronous load through the VFS (game thread; glyphs).
         bool Load_Frame_Png(const std::string& path, s_hd_frame* frame) {
             std::vector<uint8_t> bytes;
@@ -305,12 +350,16 @@ namespace hd_sprites {
                 if (!frame->load.compare_exchange_strong(expected, LOAD_LOADING)) {
                     continue; // already taken (queued twice) or evicted meanwhile
                 }
-                bool ok;
+                bool ok = false;
                 if (!frame->disk_path.empty()) {
-                    ok = Decode_Png(SDL_IOFromFile(frame->disk_path.c_str(), "rb"), frame->disk_path, frame);
+                    size_t size = 0;
+                    void* bytes = SDL_LoadFile(frame->disk_path.c_str(), &size);
+                    if (bytes != nullptr) {
+                        ok = Decode_Frame_Bytes((const uint8_t*)bytes, size, frame->disk_path, frame);
+                        SDL_free(bytes);
+                    }
                 } else {
-                    ok = !frame->packed.empty() &&
-                        Decode_Png(SDL_IOFromConstMem(frame->packed.data(), frame->packed.size()), frame->vfs_path, frame);
+                    ok = !frame->packed.empty() && Decode_Frame_Bytes(frame->packed.data(), frame->packed.size(), frame->vfs_path, frame);
                     std::vector<uint8_t>().swap(frame->packed);
                 }
                 if (ok) {
@@ -382,6 +431,9 @@ namespace hd_sprites {
             asset->scale = (int32_t)yyjson_get_int(yyjson_obj_get(root, "scale"));
             asset->glassed = yyjson_get_bool(yyjson_obj_get(root, "glassed"));
             const char* format = yyjson_get_str(yyjson_obj_get(root, "format"));
+            // Frame files are <FFF>.png, or <FFF>.webp when sprite.json says "image": "webp".
+            const char* image = yyjson_get_str(yyjson_obj_get(root, "image"));
+            const bool webp = image != nullptr && strcmp(image, "webp") == 0;
             const bool full_colour = format != nullptr && strcmp(format, "rgba") == 0;
             yyjson_val* source_hash = yyjson_obj_get(root, "source_hash");
             asset->has_source_hash = yyjson_is_uint(source_hash) || yyjson_is_int(source_hash);
@@ -414,7 +466,7 @@ namespace hd_sprites {
                     continue;
                 }
                 char name[16];
-                snprintf(name, sizeof(name), "/%03d.png", frame_number);
+                snprintf(name, sizeof(name), webp ? "/%03d.webp" : "/%03d.png", frame_number);
                 frame->vfs_path = asset->directory + name;
                 frame->full_colour = full_colour;
                 char disk[1024];

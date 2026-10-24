@@ -374,6 +374,19 @@ set(LIBUV_BUILD_BENCH OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${ORION2RE_VENDORED_LIBUV_DIR}" EXCLUDE_FROM_ALL)
 
+# libwebp (decoder only): full-colour HD art frames are stored as WebP.
+set(ORION2RE_VENDORED_LIBWEBP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendors/libwebp")
+if(NOT EXISTS "${ORION2RE_VENDORED_LIBWEBP_DIR}/src/webp/decode.h")
+    message(FATAL_ERROR
+        "HD art decoding requires the libwebp submodule at vendors/libwebp. "
+        "Run 'git submodule update --init vendors/libwebp'.")
+endif()
+foreach(option WEBP_BUILD_ANIM_UTILS WEBP_BUILD_CWEBP WEBP_BUILD_DWEBP WEBP_BUILD_GIF2WEBP WEBP_BUILD_IMG2WEBP
+        WEBP_BUILD_VWEBP WEBP_BUILD_WEBPINFO WEBP_BUILD_LIBWEBPMUX WEBP_BUILD_WEBPMUX WEBP_BUILD_EXTRAS)
+    set(${option} OFF CACHE BOOL "" FORCE)
+endforeach()
+add_subdirectory("${ORION2RE_VENDORED_LIBWEBP_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/vendors/libwebp" EXCLUDE_FROM_ALL)
+
 add_library(orion2re_lz4 STATIC
     "${ORION2RE_VENDORED_LZ4_DIR}/lib/lz4.c"
 )
@@ -483,6 +496,7 @@ if(ORION2RE_BUILD_GAME OR ORION2RE_BUILD_CONFIG_TOOL)
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${ORION2RE_VENDORED_LIBSMACKER_DIR}"
         "${ORION2RE_VENDORED_YYJSON_DIR}/src"
+        "${ORION2RE_VENDORED_LIBWEBP_DIR}/src"
     )
     target_precompile_headers(orion2re_game_objects PRIVATE
         "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/src/pch.h>"
@@ -490,7 +504,7 @@ if(ORION2RE_BUILD_GAME OR ORION2RE_BUILD_CONFIG_TOOL)
     target_link_libraries(orion2re_game_objects PRIVATE
         SDL3::Headers
         uv_a
-        orion2re_lz4
+        orion2re_lz4 webpdecoder
         orion2re_lua
         miniz
     )
@@ -645,7 +659,7 @@ if(ORION2RE_BUILD_GAME)
     target_link_libraries(orion2re PRIVATE
         SDL3::SDL3-static
         uv_a
-        orion2re_lz4
+        orion2re_lz4 webpdecoder
         orion2re_lua
         orion2re_scalers
         miniz
@@ -665,7 +679,7 @@ if(ORION2RE_BUILD_GAME)
         "${ORION2RE_VENDORED_LIBSMACKER_DIR}"
         "${ORION2RE_VENDORED_YYJSON_DIR}/src")
     target_link_libraries(config-load-benchmark PRIVATE SDL3::SDL3-static uv_a
-        orion2re_lz4 orion2re_lua orion2re_scalers miniz orion2re_imgui)
+        orion2re_lz4 webpdecoder orion2re_lua orion2re_scalers miniz orion2re_imgui)
     if(MSVC)
         target_compile_definitions(config-load-benchmark PRIVATE WIN32 _CRT_SECURE_NO_DEPRECATE _CRT_NONSTDC_NO_DEPRECATE)
     endif()
@@ -735,7 +749,7 @@ if(ORION2RE_BUILD_CONFIG_TOOL)
     target_link_libraries(config-tool PRIVATE
         SDL3::SDL3-static
         uv_a
-        orion2re_lz4
+        orion2re_lz4 webpdecoder
         orion2re_lua
         orion2re_scalers
         miniz
@@ -873,7 +887,7 @@ target_include_directories(orion2re-router PRIVATE
 )
 target_link_libraries(orion2re-router PRIVATE
     uv_a
-    orion2re_lz4
+    orion2re_lz4 webpdecoder
 )
 
 if(ORION2RE_LITTLE_ENDIAN_COMPILE_FLAG)
