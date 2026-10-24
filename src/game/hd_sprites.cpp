@@ -1382,6 +1382,12 @@ namespace hd_sprites {
         return enabled;
     }
 
+    void Shutdown() {
+        if (workers_started) {
+            Stop_Workers();
+        }
+    }
+
     void Register_Load(const void* data, int32_t size, const char* lbx_name, int32_t entry) {
         if (!initialized) {
             Initialize();
