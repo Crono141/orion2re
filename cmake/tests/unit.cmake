@@ -232,7 +232,7 @@ orion2re_add_unit_test(test_resource_reload
         vendors/libsmacker/smk_hufftree.c
         vendors/yyjson/src/yyjson.c
     LIBRARIES
-        uv_a orion2re_lz4 orion2re_lua orion2re_scalers miniz orion2re_imgui
+        uv_a orion2re_lz4 webpdecoder orion2re_lua orion2re_scalers miniz orion2re_imgui
     LINK_SDL
 )
 target_include_directories(test_resource_reload PRIVATE
