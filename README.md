@@ -50,8 +50,9 @@ older assets keep their original names. Windows x86/x64 and macOS ARM64 are avai
 For development builds, select a successful **main** run under
 [Actions / CI and packages](https://github.com/orion2re/orion2re/actions/workflows/ci.yml)
 and download its platform artifact (sign-in required; retained for 30 days).
-The artifact contains a ZIP with `main` as its version, such as
-`orion2re-win-win32-main.zip`; the workflow run identifies the exact commit.
+The download is the distributable ZIP itself, such as `orion2re-win-win32-main.zip`,
+with the executable and `data/` at its root, not inside another archive or directory.
+The workflow run identifies the exact commit.
 
 Extract the ZIP over your existing game installation. Packages include runtime
 data but no commercial game files or `orion2re.cfg`, so your configuration survives
