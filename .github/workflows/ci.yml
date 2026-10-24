@@ -39,7 +39,7 @@ jobs:
       - name: Packaging regression tests
         run: python3 -m unittest discover -s tests/packaging -v
       - run: cmake --preset linux-debug-asan-tests
-      - run: cmake --build --preset linux-debug-asan-tests --parallel 4
+      - run: cmake --build --preset linux-debug-asan-tests --parallel "$(nproc)"
       - name: Native game build smoke test
         run: cmake --build --preset linux-debug-asan-tests --target orion2re --parallel 4
       - run: ctest --preset linux-debug-asan-tests
