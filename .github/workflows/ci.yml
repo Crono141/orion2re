@@ -74,17 +74,26 @@ jobs:
         run: cmake --build --preset docs --target docs-check docs-pdf --parallel 2
       - name: Documentation regression tests
         run: out/build/Linux/docs/docs/pdf-venv/bin/python -m unittest discover -s tests/documentation -v
-      - name: Stage documentation artifact
+      - name: Package portal and stage standalone PDF
         run: |
           if [[ ! "$RELEASE_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$RELEASE_VERSION" == *..* ]]; then
             echo 'Unsafe release version' >&2
             exit 1
           fi
           mkdir -p dist
+          python3 tools/package_documentation.py out/build/Linux/docs/docs/site "dist/orion2re-documentation-${RELEASE_VERSION}.zip"
           cp out/build/Linux/docs/docs/orion2re-documentation.pdf "dist/orion2re-documentation-${RELEASE_VERSION}.pdf"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload portal ZIP without rewrapping
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: dist/*.pdf
+          path: dist/orion2re-documentation-${{ env.RELEASE_VERSION }}.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload standalone PDF without zipping
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/orion2re-documentation-${{ env.RELEASE_VERSION }}.pdf
           archive: false
           if-no-files-found: error
           retention-days: 30
@@ -181,8 +190,8 @@ jobs:
           fi
           shopt -s nullglob dotglob
           files=(dist/*)
-          if (( ${#files[@]} != 4 )); then
-            echo 'Expected three platform ZIPs and one documentation PDF; refusing publication' >&2
+          if (( ${#files[@]} != 5 )); then
+            echo 'Expected three platform ZIPs, one portal ZIP, and one PDF; refusing publication' >&2
             exit 1
           fi
           for platform in win-win32 win-win64 osx-arm64; do
@@ -192,6 +201,12 @@ jobs:
               exit 1
             fi
           done
+          portal="dist/orion2re-documentation-${RELEASE_TAG}.zip"
+          if [[ ! -f "$portal" || ! -s "$portal" || -L "$portal" ]]; then
+            echo 'Missing, empty, or unsafe documentation portal ZIP' >&2
+            exit 1
+          fi
+          python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); sys.exit(0 if z.testzip() is None and "index.html" in z.namelist() else "Invalid portal ZIP")' "$portal"
           pdf="dist/orion2re-documentation-${RELEASE_TAG}.pdf"
           if [[ ! -f "$pdf" || ! -s "$pdf" || -L "$pdf" ]]; then
             echo 'Missing, empty, or unsafe documentation PDF' >&2
@@ -209,6 +224,7 @@ jobs:
               "orion2re-win-win32-${RELEASE_TAG}.zip" \
               "orion2re-win-win64-${RELEASE_TAG}.zip" \
               "orion2re-osx-arm64-${RELEASE_TAG}.zip" \
+              "orion2re-documentation-${RELEASE_TAG}.zip" \
               "orion2re-documentation-${RELEASE_TAG}.pdf"; do
               if [[ "$asset" == "$expected" ]]; then
                 printf 'Release asset already exists; nothing replaced: %s\n' "$asset" >&2
@@ -225,4 +241,5 @@ jobs:
             "dist/orion2re-win-win32-${RELEASE_TAG}.zip" \
             "dist/orion2re-win-win64-${RELEASE_TAG}.zip" \
             "dist/orion2re-osx-arm64-${RELEASE_TAG}.zip" \
+            "dist/orion2re-documentation-${RELEASE_TAG}.zip" \
             "dist/orion2re-documentation-${RELEASE_TAG}.pdf"

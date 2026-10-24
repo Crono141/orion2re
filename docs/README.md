@@ -76,4 +76,19 @@ Run the focused regression tests using the PDF environment:
 out/build/Linux/docs/docs/pdf-venv/bin/python -m unittest discover -s tests/documentation -v
 ```
 
-GitHub Actions uploads `orion2re-documentation-main.pdf` on ordinary builds and a versioned PDF on published releases, retaining CI artifacts for 30 days. Release PDFs are published alongside, not inside, the platform ZIPs.
+## CI artifacts and releases
+
+Every documentation job builds the HTML portal and PDF from the checked-out revision, then uploads two separate files, retained for 30 days:
+
+- `orion2re-documentation-main.zip`: the complete offline HTML portal, including generated references, images, styles, and search assets. Extract it and open `index.html` at the archive root.
+- `orion2re-documentation-main.pdf`: the standalone PDF, uploaded directly without a ZIP wrapper and not included in the portal ZIP.
+
+Published releases use the release tag instead of `main` in both filenames. Both documentation assets are attached alongside the three platform ZIPs. Publication requires all five assets and refuses to replace existing release assets.
+
+To package a locally built portal:
+
+```sh
+python3 tools/package_documentation.py out/build/Linux/docs/docs/site out/orion2re-documentation-main.zip
+```
+
+Packaging validates the ZIP CRCs and rejects missing entry pages, symlinks, unsafe filenames, existing output archives, and accidentally included PDFs. Only the generated HTML site is packaged, not its virtual environments or build tools.
