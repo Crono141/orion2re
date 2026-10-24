@@ -2039,6 +2039,9 @@ namespace hd_sprites {
             if (!ok) {
                 delete frame;
                 frame = nullptr;
+                if (stats_enabled) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd stats: no art for cursor %08x", hash);
+                }
             }
             found = cursors.emplace(hash, frame).first;
         }
