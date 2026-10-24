@@ -732,6 +732,9 @@ namespace hd_sprites {
         s_surface page_back;
         s_surface page_published;
         s_surface page_present;
+        // Guards allocating/freeing the page surfaces (game thread) against the presenter
+        // reading the published/present surfaces.
+        std::mutex planes_mutex;
         // Factor (0-256) applied to literal pixels so they follow palette fades.
         uint32_t published_fade = 256;
         uint32_t present_fade = 256;
@@ -1917,6 +1920,7 @@ namespace hd_sprites {
             return;
         }
         Free_Planes();
+        std::lock_guard<std::mutex> lock(planes_mutex);
         Allocate_Page(page_off, width, height);
         Allocate_Page(page_back, width, height);
         Allocate_Page(page_published, width, height);
@@ -1924,6 +1928,7 @@ namespace hd_sprites {
     }
 
     void Free_Planes() {
+        std::lock_guard<std::mutex> lock(planes_mutex);
         pending.clear();
         deferred.clear();
         waiting_stamps.clear();
@@ -2030,6 +2035,7 @@ namespace hd_sprites {
     }
 
     void Snapshot_Plane() {
+        std::lock_guard<std::mutex> lock(planes_mutex);
         if (page_published.hd.empty()) {
             return;
         }
@@ -2090,6 +2096,7 @@ namespace hd_sprites {
     bool Resolve(const video::s_palette_color* palette, uint32_t* output, int32_t* row_first, int32_t* row_last) {
         static uint32_t last_palette[256];
         static uint32_t last_fade = 0xFFFFFFFFu;
+        std::lock_guard<std::mutex> lock(planes_mutex);
         if (page_present.hd.empty()) {
             return false;
         }
