@@ -328,6 +328,8 @@ namespace hd_sprites {
         std::mutex queue_mutex;
         std::condition_variable queue_ready;
         std::deque<s_hd_frame*> queue;
+        std::vector<std::thread> workers;
+        bool workers_stop;
         std::atomic<int64_t> decoded_bytes;
         uint32_t publish_count;
         int64_t cache_budget = (int64_t)4096 << 20;
@@ -342,7 +344,10 @@ namespace hd_sprites {
                 s_hd_frame* frame = nullptr;
                 {
                     std::unique_lock<std::mutex> lock(queue_mutex);
-                    queue_ready.wait(lock, [] { return !queue.empty(); });
+                    queue_ready.wait(lock, [] { return !queue.empty() || workers_stop; });
+                    if (workers_stop) {
+                        return;
+                    }
                     frame = queue.front();
                     queue.pop_front();
                 }
@@ -369,6 +374,23 @@ namespace hd_sprites {
             }
         }
 
+        // Workers must be stopped before the queue's mutex and condition variable are destroyed
+        // at exit (destroying them under waiting threads hangs or crashes the shutdown).
+        void Stop_Workers() {
+            {
+                std::lock_guard<std::mutex> lock(queue_mutex);
+                workers_stop = true;
+                queue.clear();
+            }
+            queue_ready.notify_all();
+            for (std::thread& worker : workers) {
+                if (worker.joinable()) {
+                    worker.join();
+                }
+            }
+            workers.clear();
+        }
+
         void Start_Workers() {
             if (workers_started) {
                 return;
@@ -376,8 +398,11 @@ namespace hd_sprites {
             workers_started = true;
             const int32_t count = SDL_clamp(SDL_GetNumLogicalCPUCores() / 4, 2, 8);
             for (int32_t i = 0; i < count; ++i) {
-                std::thread(Worker).detach();
+                workers.emplace_back(Worker);
             }
+            // Registered after the queue globals were constructed, so it runs before they are
+            // destroyed.
+            std::atexit(Stop_Workers);
         }
 
         // Queues a frame for decoding; urgent frames (wanted by a draw now) go first.
