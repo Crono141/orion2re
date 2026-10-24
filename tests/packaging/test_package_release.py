@@ -74,6 +74,9 @@ class PackagingTests(unittest.TestCase):
                 self.assertEqual(archive.name, f"orion2re-win-{platform}-main.zip")
                 packaging.verify_archive(archive, platform, self.mods)
                 with zipfile.ZipFile(archive) as result:
+                    self.assertEqual({name.split("/")[0] for name in result.namelist()},
+                                     {"orion2re.exe", "data"})
+                    self.assertEqual(result.read("orion2re.exe"), synthetic_executable(platform))
                     self.assertEqual(result.read("data/extra.dat"), b"additional runtime asset")
                     self.assertNotIn("data/orion2re.cfg", result.namelist())
                 self.assertEqual(self.config.read_bytes(), b"untouched build configuration")

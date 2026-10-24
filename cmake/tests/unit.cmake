@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/shared_objects.cmake")
+
 set(ORION2RE_DEFAULT_CONFIG_SOURCES
     src/game/aibuild_config.cpp
     src/game/aidesign_config.cpp
@@ -49,8 +51,9 @@ set(ORION2RE_DEFAULT_CONFIG_SOURCES
     src/game/techinit_config.cpp
 )
 
+orion2re_test_shared_sources(ORION2RE_DEFAULT_CONFIG_OBJECTS ${ORION2RE_DEFAULT_CONFIG_SOURCES})
 add_library(orion2re_test_config_defaults STATIC
-    ${ORION2RE_DEFAULT_CONFIG_SOURCES}
+    ${ORION2RE_DEFAULT_CONFIG_OBJECTS}
 )
 target_compile_features(orion2re_test_config_defaults PRIVATE cxx_std_20)
 target_include_directories(orion2re_test_config_defaults PRIVATE
@@ -62,12 +65,15 @@ orion2re_enable_sanitizers(orion2re_test_config_defaults)
 function(orion2re_add_unit_test TARGET_NAME)
     cmake_parse_arguments(ORION2RE_TEST "LINK_SDL" "" "SOURCES;PRODUCTION_SOURCES;FAKE_SOURCES;LIBRARIES" ${ARGN})
 
-    add_executable(${TARGET_NAME}
-        tests/test_main.cpp
+    orion2re_test_shared_sources(ORION2RE_TEST_OBJECTS
         ${ORION2RE_TEST_SOURCES}
         ${ORION2RE_TEST_PRODUCTION_SOURCES}
         ${ORION2RE_TEST_FAKE_SOURCES}
         src/pch.cpp
+    )
+    add_executable(${TARGET_NAME}
+        tests/test_main.cpp
+        ${ORION2RE_TEST_OBJECTS}
     )
 
     target_compile_features(${TARGET_NAME} PRIVATE cxx_std_20)
