@@ -1328,6 +1328,8 @@ namespace platform {
     }
 
     void Cleanup_Surfaces() {
+        // HD art decoding threads use SDL; they must finish before SDL shuts down.
+        hd_sprites::Shutdown();
         Destroy_Present_Backend();
 
         uint8_t* const primary_cursor_surface = g_cursor_surface_1;

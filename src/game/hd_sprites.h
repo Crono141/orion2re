@@ -37,6 +37,8 @@ namespace hd_sprites {
     // Enables the feature when the VFS provides hd/pack.json. Safe to call more than once.
     void Initialize();
     bool Enabled();
+    // Stops the art decoding threads (before SDL shuts down).
+    void Shutdown();
 
     // Called for every LBX entry loaded into memory.
     void Register_Load(const void* data, int32_t size, const char* lbx_name, int32_t entry);
