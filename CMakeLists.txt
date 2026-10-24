@@ -801,14 +801,14 @@ if(ORION2RE_BUILD_DOCUMENTATION)
 
     add_custom_command(
         OUTPUT "${ORION2RE_DOCUMENTATION_BOOTSTRAP_STAMP}"
-        COMMAND "${Python3_EXECUTABLE}" -m venv
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/docs_environment.py"
             "${ORION2RE_DOCUMENTATION_VENV}"
-        COMMAND "${ORION2RE_DOCUMENTATION_PYTHON}" -m pip install
-            --disable-pip-version-check
-            --requirement "${ORION2RE_DOCUMENTATION_LOCK}"
+            "${ORION2RE_DOCUMENTATION_LOCK}"
         COMMAND ${CMAKE_COMMAND} -E touch
             "${ORION2RE_DOCUMENTATION_BOOTSTRAP_STAMP}"
         DEPENDS "${ORION2RE_DOCUMENTATION_LOCK}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/docs_environment.py"
         COMMENT "Creating the pinned documentation environment"
         VERBATIM
     )
@@ -832,6 +832,41 @@ if(ORION2RE_BUILD_DOCUMENTATION)
     )
     add_custom_target(docs-check DEPENDS docs-build)
 
+    set(ORION2RE_PDF_VENV "${ORION2RE_DOCUMENTATION_BUILD_DIR}/pdf-venv")
+    if(WIN32)
+        set(ORION2RE_PDF_PYTHON "${ORION2RE_PDF_VENV}/Scripts/python.exe")
+    else()
+        set(ORION2RE_PDF_PYTHON "${ORION2RE_PDF_VENV}/bin/python")
+    endif()
+    set(ORION2RE_PDF_LOCK "${ORION2RE_DOCUMENTATION_SOURCE_DIR}/requirements-pdf.lock")
+    set(ORION2RE_PDF_BOOTSTRAP_STAMP "${ORION2RE_PDF_VENV}/.bootstrap.stamp")
+    add_custom_command(
+        OUTPUT "${ORION2RE_PDF_BOOTSTRAP_STAMP}"
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/docs_environment.py"
+            --pdf "${ORION2RE_PDF_VENV}" "${ORION2RE_PDF_LOCK}"
+        COMMAND ${CMAKE_COMMAND} -E touch "${ORION2RE_PDF_BOOTSTRAP_STAMP}"
+        DEPENDS "${ORION2RE_PDF_LOCK}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/docs_environment.py"
+        COMMENT "Creating the pinned PDF environment (Python 3.11+ required)"
+        VERBATIM
+    )
+    add_custom_target(docs-pdf-bootstrap DEPENDS "${ORION2RE_PDF_BOOTSTRAP_STAMP}")
+    add_custom_target(docs-pdf
+        COMMAND ${CMAKE_COMMAND} -E env
+            "ORION2RE_GENERATED_CONFIG_DOCS=${ORION2RE_CONFIG_DOCUMENTATION_DIR}"
+            "DISABLE_MKDOCS_2_WARNING=true"
+            "${ORION2RE_PDF_PYTHON}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_documentation_pdf.py"
+            --config "${ORION2RE_DOCUMENTATION_SOURCE_DIR}/mkdocs-pdf.yml"
+            --site-dir "${ORION2RE_DOCUMENTATION_BUILD_DIR}/pdf-site"
+            --output "${ORION2RE_DOCUMENTATION_BUILD_DIR}/orion2re-documentation.pdf"
+        WORKING_DIRECTORY "${ORION2RE_DOCUMENTATION_SOURCE_DIR}"
+        DEPENDS docs-pdf-bootstrap config-docs
+        COMMENT "Building and validating the complete documentation PDF"
+        VERBATIM
+    )
+
     add_custom_target(docs-serve
         COMMAND ${CMAKE_COMMAND} -E env
             "ORION2RE_GENERATED_CONFIG_DOCS=${ORION2RE_CONFIG_DOCUMENTATION_DIR}"
@@ -852,6 +887,8 @@ if(ORION2RE_BUILD_DOCUMENTATION)
         COMMAND ${CMAKE_COMMAND} -E rm -rf
             "${ORION2RE_DOCUMENTATION_BUILD_DIR}/generated"
             "${ORION2RE_DOCUMENTATION_SITE_DIR}"
+            "${ORION2RE_DOCUMENTATION_BUILD_DIR}/pdf-site"
+            "${ORION2RE_DOCUMENTATION_BUILD_DIR}/orion2re-documentation.pdf"
             "${ORION2RE_CONFIG_DOCUMENTATION_STAMP}"
         COMMENT "Removing generated documentation while retaining the virtual environment"
         VERBATIM

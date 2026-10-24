@@ -44,6 +44,51 @@ jobs:
         run: cmake --build --preset linux-debug-asan-tests --target orion2re --parallel 4
       - run: ctest --preset linux-debug-asan-tests
 
+  documentation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELEASE_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || 'main' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          submodules: recursive
+          persist-credentials: false
+      - name: Install documentation and native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential cmake ninja-build pkg-config python3 python3-venv \
+            libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 fonts-dejavu-core \
+            libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libwayland-dev libdecor-0-dev libdrm-dev libgbm-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev \
+            libudev-dev libdbus-1-dev libibus-1.0-dev libpipewire-0.3-dev
+      - name: Audit pinned documentation dependencies
+        run: python3 tools/audit_documentation.py docs/requirements.lock docs/requirements-pdf.lock
+      - run: cmake --preset docs
+      - name: Build HTML and PDF documentation
+        run: cmake --build --preset docs --target docs-check docs-pdf --parallel 2
+      - name: Documentation regression tests
+        run: out/build/Linux/docs/docs/pdf-venv/bin/python -m unittest discover -s tests/documentation -v
+      - name: Stage documentation artifact
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$RELEASE_VERSION" == *..* ]]; then
+            echo 'Unsafe release version' >&2
+            exit 1
+          fi
+          mkdir -p dist
+          cp out/build/Linux/docs/docs/orion2re-documentation.pdf "dist/orion2re-documentation-${RELEASE_VERSION}.pdf"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/*.pdf
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
   package:
     needs: linux-tests
     if: >-
@@ -111,7 +156,7 @@ jobs:
           retention-days: 30
 
   publish-release:
-    needs: package
+    needs: [package, documentation]
     if: github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions:
@@ -136,8 +181,8 @@ jobs:
           fi
           shopt -s nullglob dotglob
           files=(dist/*)
-          if (( ${#files[@]} != 3 )); then
-            echo 'Expected exactly three platform ZIPs; refusing publication' >&2
+          if (( ${#files[@]} != 4 )); then
+            echo 'Expected three platform ZIPs and one documentation PDF; refusing publication' >&2
             exit 1
           fi
           for platform in win-win32 win-win64 osx-arm64; do
@@ -147,6 +192,12 @@ jobs:
               exit 1
             fi
           done
+          pdf="dist/orion2re-documentation-${RELEASE_TAG}.pdf"
+          if [[ ! -f "$pdf" || ! -s "$pdf" || -L "$pdf" ]]; then
+            echo 'Missing, empty, or unsafe documentation PDF' >&2
+            exit 1
+          fi
+          test "$(head -c 5 "$pdf")" = '%PDF-'
       - name: Refuse existing release assets
         shell: bash
         env:
@@ -154,8 +205,12 @@ jobs:
         run: |
           assets=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
           while IFS= read -r asset; do
-            for platform in win-win32 win-win64 osx-arm64; do
-              if [[ "$asset" == "orion2re-${platform}-${RELEASE_TAG}.zip" ]]; then
+            for expected in \
+              "orion2re-win-win32-${RELEASE_TAG}.zip" \
+              "orion2re-win-win64-${RELEASE_TAG}.zip" \
+              "orion2re-osx-arm64-${RELEASE_TAG}.zip" \
+              "orion2re-documentation-${RELEASE_TAG}.pdf"; do
+              if [[ "$asset" == "$expected" ]]; then
                 printf 'Release asset already exists; nothing replaced: %s\n' "$asset" >&2
                 exit 1
               fi
@@ -169,4 +224,5 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             "dist/orion2re-win-win32-${RELEASE_TAG}.zip" \
             "dist/orion2re-win-win64-${RELEASE_TAG}.zip" \
-            "dist/orion2re-osx-arm64-${RELEASE_TAG}.zip"
+            "dist/orion2re-osx-arm64-${RELEASE_TAG}.zip" \
+            "dist/orion2re-documentation-${RELEASE_TAG}.pdf"
