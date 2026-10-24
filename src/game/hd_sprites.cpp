@@ -107,6 +107,7 @@ namespace hd_sprites {
         bool trace_enabled;
         uint64_t trace_wait_start;
         size_t trace_wait_peak;
+        uint64_t trace_meta_ns;
         std::unordered_map<const void*, std::string> stats_names;
         std::unordered_map<std::string, uint32_t> stats_missing;
         uint32_t stats_draws;
@@ -442,7 +443,15 @@ namespace hd_sprites {
         }
 
         // Reads sprite.json; frame pixels are decoded later by the workers.
+        void Load_Asset_Meta(s_hd_asset* asset);
+
         void Load_Asset(s_hd_asset* asset) {
+            const uint64_t start = SDL_GetTicksNS();
+            Load_Asset_Meta(asset);
+            trace_meta_ns += SDL_GetTicksNS() - start;
+        }
+
+        void Load_Asset_Meta(s_hd_asset* asset) {
             asset->loaded = true;
             std::vector<uint8_t> json;
             const std::string meta_path = asset->directory + "/sprite.json";
@@ -2028,6 +2037,16 @@ namespace hd_sprites {
             return;
         }
         Flush_Pending();
+        if (trace_enabled) {
+            static uint64_t last_publish;
+            const uint64_t now = SDL_GetTicks();
+            if (last_publish != 0 && now - last_publish >= 100) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd trace %llu gap %llu ms between frames (sprite.json reading %.0f ms)",
+                    (unsigned long long)now, (unsigned long long)(now - last_publish), (double)trace_meta_ns / 1e6);
+            }
+            trace_meta_ns = 0;
+            last_publish = now;
+        }
         if (stats_enabled) {
             const uint64_t now = SDL_GetTicksNS();
             if (stats_last_publish_ns != 0) {
