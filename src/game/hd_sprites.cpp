@@ -1462,6 +1462,11 @@ namespace hd_sprites {
                 return;
             }
             Render_Now(target, offset, value, level);
+            // Claim the block for this draw too (glyphs, plain writes): a sprite drawn earlier
+            // whose art arrives late must not repaint over it (Upgrade_Deferred checks the mark).
+            if (!target.mark.empty()) {
+                target.mark[(size_t)offset] = generation;
+            }
         }
 
         // Settles the area the current art draw can touch, fringe included.
@@ -1620,6 +1625,11 @@ namespace hd_sprites {
                 for (const s_stamp& stamp : entry.stamps) {
                     s_surface& target = *stamp.target;
                     if (target.mark[(size_t)stamp.offset] != entry.generation || target.shadow[(size_t)stamp.offset] != stamp.value) {
+                        continue;
+                    }
+                    // A later draw's soft edge spilled into this block (e.g. text over a panel
+                    // whose art was still loading): repainting it would erase that edge.
+                    if (!target.fringe.empty() && target.fringe[(size_t)stamp.offset] != 0) {
                         continue;
                     }
                     pending.push_back(stamp);
