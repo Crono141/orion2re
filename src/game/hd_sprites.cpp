@@ -1167,6 +1167,7 @@ namespace hd_sprites {
             std::vector<s_stamp> stamps;
         };
         std::vector<s_deferred> deferred;
+        bool upgrading = false; // inside Upgrade_Deferred: replaying a draw older than the page
         std::vector<s_stamp> waiting_stamps;
 
         void Probe(const s_surface& target, int32_t offset, uint8_t value, const char* what) {
@@ -1395,6 +1396,11 @@ namespace hd_sprites {
             for (int32_t y = SDL_max(y0 - 1, clip_y1); y <= SDL_min(y1 + 1, clip_y2); ++y) {
                 for (int32_t x = SDL_max(x0 - 1, clip_x1); x <= SDL_min(x1 + 1, clip_x2); ++x) {
                     if (Marked(target, x, y)) {
+                        continue;
+                    }
+                    // A late upgrade (Upgrade_Deferred) runs after later draws: blocks they claimed
+                    // are not free neighbours (text over a panel whose art was still loading).
+                    if (upgrading && (int32_t)(target.mark[(size_t)y * target.width + x] - generation) > 0) {
                         continue;
                     }
                     if (Marked(target, x - 1, y) || Marked(target, x + 1, y) || Marked(target, x, y - 1) ||
@@ -1649,7 +1655,9 @@ namespace hd_sprites {
                         }
                     }
                 }
+                upgrading = true;
                 Flush_Pending();
+                upgrading = false;
                 for (const s_stamp& twin : twins) {
                     s_surface& from = twin.target == &page_off ? page_back : page_off;
                     const int32_t x = twin.offset % from.width;
