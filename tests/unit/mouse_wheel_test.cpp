@@ -106,3 +106,45 @@ DOCTEST_TEST_CASE("get input returns the arrow pressed by a wheel notch") {
     mouse_wheel::Add_Steps(-1.0f);
     DOCTEST_CHECK(fields::Get_Input() == list.down);
 }
+
+DOCTEST_TEST_CASE("wide list rows beside the bar are not taken for arrows") {
+    // The ship design weapon list (desbox.cpp): ten 570-pixel rows ending 7 pixels left of a
+    // 9x120 bar, the arrow buttons above and below it.
+    Wheel_Test_Reset reset;
+    int16_t value = 0;
+    for (int16_t i = 0; i < 10; ++i) {
+        (void)fields::Add_Hidden_Field(48, 79 + i * 14, 618, 91 + i * 14, "", 41);
+    }
+    const int16_t up = fields::Add_Hidden_Field(622, 61, 636, 75, "-", 40);
+    (void)fields::Add_Scroll_Field(625, 80, 0, 120, 0, 120, 9, 120, &value, "", 0);
+    const int16_t down = fields::Add_Hidden_Field(622, 222, 636, 236, "+", 40);
+    test::fakes::g_mouse_pointer_x = 300;
+    test::fakes::g_mouse_pointer_y = 150;
+
+    mouse_wheel::Add_Steps(-1.0f);
+    DOCTEST_CHECK(mouse_wheel::Take_Field() == down);
+    mouse_wheel::Add_Steps(1.0f);
+    DOCTEST_CHECK(mouse_wheel::Take_Field() == up);
+}
+
+DOCTEST_TEST_CASE("arrow buttons without a scroll bar are found by their hotkeys") {
+    // The fleet box (fleetpop.cpp): '-' and '+' buttons, no bar.
+    Wheel_Test_Reset reset;
+    const int16_t up = fields::Add_Hidden_Field(191, 42, 205, 56, "-", 40);
+    const int16_t down = fields::Add_Hidden_Field(191, 174, 205, 188, "+", 40);
+
+    mouse_wheel::Add_Steps(1.0f);
+    DOCTEST_CHECK(mouse_wheel::Take_Field() == up);
+    mouse_wheel::Add_Steps(-1.0f);
+    DOCTEST_CHECK(mouse_wheel::Take_Field() == down);
+}
+
+DOCTEST_TEST_CASE("the galaxy map zoom buttons are not scrolled") {
+    // mainscr.cpp: zoom in '+' above zoom out '-'.
+    Wheel_Test_Reset reset;
+    (void)fields::Add_Hidden_Field(244, 428, 268, 452, "+", 40);
+    (void)fields::Add_Hidden_Field(244, 455, 268, 479, "-", 40);
+
+    mouse_wheel::Add_Steps(1.0f);
+    DOCTEST_CHECK(mouse_wheel::Take_Field() == 0);
+}
