@@ -1277,6 +1277,7 @@ namespace platform {
         //   click <x> <y>       move, press and release the left button
         //   rclick <x> <y>      same with the right button
         //   key <name>          press a key (SDL key name, e.g. Return, Escape, a)
+        //   wheel <notches>     turn the mouse wheel (positive = up, away from the user)
         //   event <name>        window event: focus_lost, focus_gained, exposed
         //   screenshot <file>   save the next presented window as BMP
         //   quit                request exit
@@ -1328,7 +1329,7 @@ namespace platform {
                 s_script_step step = {command, 0, 0, {}};
                 if (step.command == "move" || step.command == "click" || step.command == "rclick") {
                     (void)sscanf(line.c_str(), "%*s %d %d", &a, &b);
-                } else if (step.command == "wait") {
+                } else if (step.command == "wait" || step.command == "wheel") {
                     (void)sscanf(line.c_str(), "%*s %d", &a);
                 } else if (sscanf(line.c_str(), "%*s %255s", argument) == 1) {
                     step.text = argument;
@@ -1361,6 +1362,12 @@ namespace platform {
                     }
                 } else if (step.command == "release") {
                     Forward_Game_Mouse_State((int16_t)step.a, (int16_t)step.b, 0, false);
+                } else if (step.command == "wheel") {
+                    SDL_Event event = {};
+                    event.type = SDL_EVENT_MOUSE_WHEEL;
+                    event.wheel.y = (float)step.a;
+                    event.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+                    (void)SDL_PushEvent(&event);
                 } else if (step.command == "key") {
                     SDL_Event event = {};
                     event.type = SDL_EVENT_KEY_DOWN;
