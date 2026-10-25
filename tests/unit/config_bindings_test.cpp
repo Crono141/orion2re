@@ -825,6 +825,230 @@ DOCTEST_TEST_CASE("Tech Review ordering binds named applications and groups") {
         &diagnostic));
 }
 
+DOCTEST_TEST_CASE("Tech Review full lists allow swapping technologies between categories") {
+    std::string source = R"(
+interface tech_review_achievements =
+    no_tech new_construction_types
+    doom_star_construction none
+    planet_construction none
+    titan_construction none
+    transport none
+    freighters none
+    outpost_ship none
+    colony_ship none
+    colony_base none
+    no_tech spies
+    psionics none
+    stealth_suit none
+    cyber_security_link none
+    telepathic_training none
+    neural_scanner none
+    spy_network none
+    no_tech ground_combat
+    battleoids none
+    powered_armor none
+    personal_shield none
+    anti_grav_harness none
+    plasma_rifle none
+    phasor_rifle none
+    fusion_rifle none
+    laser_rifle none
+    pulse_rifle none
+    no_tech ship_equipment
+    galactic_currency_exchange none
+    megafluxers none
+    emissions_guidance_system none
+    dauntless_guidance_system none
+    advanced_damage_control none
+    survival_pods none
+    no_tech colony
+    star_gate none
+    jump_gate none
+    android_scientists none
+    android_workers none
+    android_farmers none
+    advanced_city_planning none
+    nano_disassemblers none
+    microlite_construction none
+    biomorphic_fungi none
+    universal_antidote none
+    microbiotics none
+    no_tech miscellaneous
+    hyperspace_communications none
+    sub_space_communications none
+    tachyon_communications none
+    evolutionary_mutation none
+    heightened_intelligence none
+    xeno_psychology none
+    imperium none
+    galactic_unification none
+    federation none
+    confederation none
+    capitol none
+    no_tech none;
+interface tech_review_colony =
+    no_tech food
+    gaia_transformation none
+    terraforming none
+    food_replicators none
+    weather_control_system none
+    soil_enrichment none
+    subterranean_farms none
+    hydroponic_farm none
+    no_tech production
+    deep_core_mining none
+    robotic_factory none
+    recyclotron none
+    robo_miners none
+    automated_factories none
+    no_tech pollution
+    core_waste_dumps none
+    atmospheric_renewer none
+    pollution_processor none
+    no_tech research
+    galactic_cybernet none
+    autolab none
+    planetary_supercomputer none
+    research_laboratory none
+    no_tech money
+    planetary_stock_exchange none
+    spaceport none
+    no_tech morale
+    virtual_reality_network none
+    pleasure_dome none
+    holo_simulator none
+    no_tech colony_defense
+    warp_interdictor none
+    artemis_system_net none
+    star_fortress none
+    battlestation none
+    star_base none
+    planetary_barrier_shield none
+    planetary_flux_shield none
+    planetary_radiation_shield none
+    ground_batteries none
+    fighter_garrison none
+    planetary_missile_base none
+    armor_barracks none
+    marine_barracks none
+    no_tech miscellaneous
+    dimensional_portal none
+    planetary_gravity_generator none
+    astro_university none
+    alien_management_center none
+    space_academy none
+    cloning_center none
+    biospheres none
+    no_tech none;
+)";
+    config::s_config_write_set writes;
+    config::s_cfg_diagnostic diagnostic;
+
+    DOCTEST_SUBCASE("one-for-one exchange preserves both list capacities") {
+        config::s_config_state state;
+        DOCTEST_REQUIRE(config::Initialize_Defaults(&state));
+        DOCTEST_REQUIRE_MESSAGE(Append_Decoded_(source.c_str(), &writes, &diagnostic),
+            diagnostic.message);
+        DOCTEST_CHECK(writes.writes.size() == 2 * (58 + 53));
+        DOCTEST_REQUIRE_MESSAGE(config::Apply_Write_Set(&writes, &state, &diagnostic),
+            diagnostic.message);
+        DOCTEST_REQUIRE(config::Commit_State(&state));
+
+        DOCTEST_CHECK(INFO::review_achievements[26].group == TECH_REVIEW_GROUP_SHIP_EQUIPMENT);
+        DOCTEST_CHECK(INFO::review_achievements[27].application == TECH_APP_GALACTIC_CURRENCY_EXCHANGE);
+        DOCTEST_CHECK(INFO::review_achievements[27].group == TECH_REVIEW_GROUP_NONE);
+        DOCTEST_CHECK(INFO::review_colony[26].group == TECH_REVIEW_GROUP_MORALE);
+        DOCTEST_CHECK(INFO::review_colony[27].application == TECH_APP_VIRTUAL_REALITY_NETWORK);
+        DOCTEST_CHECK(INFO::review_colony[27].group == TECH_REVIEW_GROUP_NONE);
+        for (const s_tech_review_achievement& entry : INFO::review_achievements) {
+            DOCTEST_CHECK(entry.application != TECH_APP_VIRTUAL_REALITY_NETWORK);
+        }
+        for (const s_tech_review_achievement& entry : INFO::review_colony) {
+            DOCTEST_CHECK(entry.application != TECH_APP_GALACTIC_CURRENCY_EXCHANGE);
+        }
+    }
+
+    DOCTEST_SUBCASE("an extra colony entry fits beyond the original capacity") {
+        source.insert(source.rfind("    no_tech none;"), "    virtual_reality_network none\n");
+        config::s_config_state state;
+        DOCTEST_REQUIRE(config::Initialize_Defaults(&state));
+        DOCTEST_REQUIRE_MESSAGE(Append_Decoded_(source.c_str(), &writes, &diagnostic),
+            diagnostic.message);
+        DOCTEST_REQUIRE_MESSAGE(config::Apply_Write_Set(&writes, &state, &diagnostic),
+            diagnostic.message);
+        DOCTEST_REQUIRE(config::Commit_State(&state));
+        DOCTEST_CHECK(INFO::review_colony[52].application == TECH_APP_VIRTUAL_REALITY_NETWORK);
+        DOCTEST_CHECK(INFO::review_colony[52].group == TECH_REVIEW_GROUP_NONE);
+        DOCTEST_CHECK(INFO::review_colony[53].application == TECH_APP_NO_TECH);
+        DOCTEST_CHECK(INFO::review_colony[53].group == TECH_REVIEW_GROUP_NONE);
+    }
+}
+
+DOCTEST_TEST_CASE("Tech Review categories accept 256 slots and reject overflow") {
+    const char* categories[] = {
+        "tech_review_achievements",
+        "tech_review_colony",
+        "tech_review_weapons",
+        "tech_review_equipment",
+    };
+    for (int category = 0; category < 4; ++category) {
+        DOCTEST_CAPTURE(categories[category]);
+        config::s_config_state state;
+        DOCTEST_REQUIRE(config::Initialize_Defaults(&state));
+        const std::string path = std::string("interface ") + categories[category];
+        std::string source = path + " =\n";
+        for (int entry = 0; entry < 255; ++entry) {
+            source += entry % 17 == 0 ? "no_tech miscellaneous\n" : "virtual_reality_network none\n";
+        }
+        source += "no_tech none;";
+
+        config::s_config_write_set writes;
+        config::s_cfg_diagnostic diagnostic;
+        DOCTEST_REQUIRE_MESSAGE(Append_Decoded_(source.c_str(), &writes, &diagnostic),
+            diagnostic.message);
+        DOCTEST_CHECK(writes.writes.size() == 512);
+        DOCTEST_REQUIRE_MESSAGE(config::Apply_Write_Set(&writes, &state, &diagnostic),
+            diagnostic.message);
+        DOCTEST_REQUIRE(config::Commit_State(&state));
+        const s_tech_review_achievement* review = INFO::review_list[category];
+        for (int entry = 0; entry < 255; ++entry) {
+            DOCTEST_CHECK(review[entry].application ==
+                (entry % 17 == 0 ? TECH_APP_NO_TECH : TECH_APP_VIRTUAL_REALITY_NETWORK));
+            DOCTEST_CHECK(review[entry].group ==
+                (entry % 17 == 0 ? TECH_REVIEW_GROUP_MISCELLANEOUS : TECH_REVIEW_GROUP_NONE));
+        }
+        DOCTEST_CHECK(review[255].application == TECH_APP_NO_TECH);
+        DOCTEST_CHECK(review[255].group == TECH_REVIEW_GROUP_NONE);
+
+        writes.writes.clear();
+        DOCTEST_REQUIRE(Append_Decoded_((path + " 256 = no_tech none;").c_str(),
+            &writes,
+            &diagnostic));
+        DOCTEST_CHECK(writes.writes.size() == 2);
+        writes.writes.clear();
+        DOCTEST_CHECK_FALSE(Append_Decoded_((path + " 257 = no_tech none;").c_str(),
+            &writes,
+            &diagnostic));
+
+        writes.writes.clear();
+        DOCTEST_REQUIRE(Append_Decoded_(
+            (path + " = no_tech miscellaneous virtual_reality_network none no_tech none;").c_str(),
+            &writes,
+            &diagnostic));
+        DOCTEST_REQUIRE(config::Apply_Write_Set(&writes, &state, &diagnostic));
+        DOCTEST_REQUIRE(config::Commit_State(&state));
+        DOCTEST_CHECK(review[2].application == TECH_APP_NO_TECH);
+        DOCTEST_CHECK(review[2].group == TECH_REVIEW_GROUP_NONE);
+
+        writes.writes.clear();
+        source.insert(source.rfind("no_tech none;"), "virtual_reality_network none\n");
+        DOCTEST_REQUIRE_FALSE(Append_Decoded_(source.c_str(), &writes, &diagnostic));
+        DOCTEST_CHECK(diagnostic.message ==
+            std::string("value 513 exceeds selected configuration object 'interface.") +
+                categories[category] + "'");
+    }
+}
+
 DOCTEST_TEST_CASE("colony autobuild settings bind and validate queue defaults") {
     config::s_config_state state;
     DOCTEST_REQUIRE(config::Initialize_Defaults(&state));

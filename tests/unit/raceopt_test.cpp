@@ -15,10 +15,10 @@ namespace {
     };
 
     constexpr s_expected_review kExpectedReviews[] = {
-        {0, INFO::TECH_REVIEW_ACHIEVEMENT_COUNT, 0x1286C8D0},
-        {1, INFO::TECH_REVIEW_COLONY_COUNT, 0xFBE5E318},
-        {2, INFO::TECH_REVIEW_WEAPON_COUNT, 0x7574C917},
-        {3, INFO::TECH_REVIEW_EQUIPMENT_COUNT, 0x6CE258F8},
+        {0, 58, 0x1286C8D0},
+        {1, 53, 0xFBE5E318},
+        {2, 45, 0x7574C917},
+        {3, 79, 0x6CE258F8},
     };
 
     uint32_t Review_Hash_(const s_tech_review_achievement* review, uint16_t entry_count) {
@@ -54,7 +54,7 @@ DOCTEST_TEST_CASE("tech review categories use the 1.50 ordering") {
         DOCTEST_CHECK(Review_Hash_(review, expected.entry_count) == expected.hash);
         DOCTEST_CHECK(review[expected.entry_count - 1].application == TECH_APP_NO_TECH);
         DOCTEST_CHECK(review[expected.entry_count - 1].group == TECH_REVIEW_GROUP_NONE);
-        DOCTEST_CHECK(INFO::list_sizes[expected.review_idx] == expected.entry_count * sizeof(s_list_item));
+        DOCTEST_CHECK(INFO::list_sizes[expected.review_idx] == 256 * sizeof(s_list_item));
     }
 }
 
