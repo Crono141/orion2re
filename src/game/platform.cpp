@@ -1391,7 +1391,9 @@ namespace platform {
                     wheel_x = -wheel_x;
                     wheel_y = -wheel_y;
                 }
-                (void)debug_overlay::Handle_Mouse_Wheel(wheel_x, wheel_y);
+                if (!debug_overlay::Handle_Mouse_Wheel(wheel_x, wheel_y)) {
+                    mouse_wheel::Add_Steps(wheel_y);
+                }
                 continue;
             }
         }
