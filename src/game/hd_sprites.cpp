@@ -114,6 +114,9 @@ namespace hd_sprites {
         std::unordered_map<std::string, uint32_t> stats_missing;
         uint32_t stats_draws;
         uint32_t stats_interval = 20000;
+        // ORION2RE_HD_SLOW_IO=<ms>: debug aid, every art load waits this long first, to reproduce
+        // what players on slow (network, spinning) disks see when art arrives late.
+        uint32_t slow_io_ms = 0;
         uint32_t stats_glyph_missing_art;
         uint32_t stats_publishes;
         uint32_t stats_settled_pixels;
@@ -384,6 +387,9 @@ namespace hd_sprites {
                     continue; // already taken (queued twice) or evicted meanwhile
                 }
                 bool ok = false;
+                if (slow_io_ms != 0) {
+                    SDL_Delay(slow_io_ms);
+                }
                 if (!frame->disk_path.empty()) {
                     size_t size = 0;
                     void* bytes = SDL_LoadFile(frame->disk_path.c_str(), &size);
@@ -1678,6 +1684,10 @@ namespace hd_sprites {
             stats_interval = (uint32_t)atoi(stats);
         }
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd: %s", enabled ? "HD sprite pack found" : "no HD sprite pack");
+        const char* slow_io = SDL_getenv("ORION2RE_HD_SLOW_IO");
+        if (slow_io != nullptr && atoi(slow_io) > 0) {
+            slow_io_ms = (uint32_t)atoi(slow_io);
+        }
         const char* budget = SDL_getenv("ORION2RE_HD_CACHE_MB");
         if (budget != nullptr && atoi(budget) > 0) {
             cache_budget = (int64_t)atoi(budget) << 20;
