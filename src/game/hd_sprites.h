@@ -45,6 +45,9 @@ namespace hd_sprites {
     // The loaded entries in [begin, end) were freed, or moved by `delta` bytes (cache compaction).
     void Forget_Loads(const void* begin, const void* end);
     void Move_Loads(const void* begin, const void* end, ptrdiff_t delta);
+    // The engine rewrote indices [first, first + count) of a loaded entry in place through `map`
+    // (replace::Replace_Color_Range); its HD art is drawn through the same mapping.
+    void Note_Recolor(const void* anim, int32_t first, int32_t count, const uint8_t* map);
 
     // Brackets one sprite draw; blitters stamp the pixels they write in between.
     void Begin_Draw(const s_animation_header* anim, int16_t x, int16_t y);

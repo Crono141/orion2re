@@ -78,6 +78,10 @@ namespace hd_sprites {
             uint32_t data_hash;
             uint8_t header[12];
             int32_t size;
+            // Indices the engine rewrote in the loaded bytes after loading (Note_Recolor), e.g. a
+            // player's colour put into combat fighters; the HD art is drawn through the same map.
+            bool recolored;
+            uint8_t recolor[256];
         };
 
         // HD glyphs for one font size of one font file: hd/<FILE>/<font>/<code>.png, LA with
@@ -1556,6 +1560,10 @@ namespace hd_sprites {
             draw.frame = frame;
             draw.x = x;
             draw.y = y;
+            if (found->second.recolored) {
+                memcpy(draw.remap, found->second.recolor, sizeof(draw.remap));
+                draw.remapped = true;
+            }
             draw.glassed = asset->glassed || (anim->flags & ANIMATION_FLAG_GLASSED) != 0;
             Settle_Art_Area();
         }
@@ -1859,8 +1867,40 @@ namespace hd_sprites {
             return;
         }
         if (draw.source == SOURCE_ART || draw.source == SOURCE_IMAGE) {
-            memcpy(draw.remap, remap, sizeof(draw.remap));
+            if (draw.remapped) {
+                // The art was recoloured in place first (Note_Recolor); this draw's remap applies after.
+                for (int32_t i = 0; i < 256; ++i) {
+                    draw.remap[i] = remap[draw.remap[i]];
+                }
+            } else {
+                memcpy(draw.remap, remap, sizeof(draw.remap));
+            }
             draw.remapped = true;
+        }
+    }
+
+    void Note_Recolor(const void* anim, int32_t first, int32_t count, const uint8_t* map) {
+        if (!enabled || anim == nullptr || map == nullptr || count <= 0) {
+            return;
+        }
+        const auto found = registrations.find(anim);
+        if (found == registrations.end()) {
+            return;
+        }
+        s_registration& registration = found->second;
+        if (!registration.recolored) {
+            for (int32_t i = 0; i < 256; ++i) {
+                registration.recolor[i] = (uint8_t)i;
+            }
+            registration.recolored = true;
+        }
+        // Applied to what each original index has become so far; index 0 (transparent) is never
+        // rewritten, as in the engine's recolour loops.
+        for (int32_t i = 1; i < 256; ++i) {
+            const int32_t current = registration.recolor[i];
+            if (current != 0 && current >= first && current < first + count) {
+                registration.recolor[i] = map[current - first];
+            }
         }
     }
 
@@ -2394,8 +2434,7 @@ namespace hd_sprites {
             static uint64_t last_publish;
             const uint64_t now = SDL_GetTicks();
             if (last_publish != 0 && now - last_publish >= 100) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd trace %llu gap %llu ms between frames (sprite.json reading %.0f ms)",
-                    (unsigned long long)now, (unsigned long long)(now - last_publish), (double)trace_meta_ns / 1e6);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd trace %llu gap %llu ms between frames (sprite.json reading %.0f ms)", (unsigned long long)now, (unsigned long long)(now - last_publish), (double)trace_meta_ns / 1e6);
             }
             trace_meta_ns = 0;
             last_publish = now;
@@ -2414,8 +2453,7 @@ namespace hd_sprites {
                 trace_wait_start = trace_wait_start != 0 ? trace_wait_start : SDL_GetTicks();
                 trace_wait_peak = SDL_max(trace_wait_peak, deferred.size());
             } else if (trace_wait_start != 0) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd trace %llu waited %llu ms for art (%d draws at most)",
-                    (unsigned long long)SDL_GetTicks(), (unsigned long long)(SDL_GetTicks() - trace_wait_start), (int)trace_wait_peak);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "hd trace %llu waited %llu ms for art (%d draws at most)", (unsigned long long)SDL_GetTicks(), (unsigned long long)(SDL_GetTicks() - trace_wait_start), (int)trace_wait_peak);
                 trace_wait_start = 0;
                 trace_wait_peak = 0;
             }
