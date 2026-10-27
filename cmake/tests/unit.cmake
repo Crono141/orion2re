@@ -204,6 +204,25 @@ orion2re_add_unit_test(test_allocate
         src/game/allocate.cpp
 )
 
+orion2re_add_unit_test(test_score
+    SOURCES tests/unit/score_test.cpp
+    PRODUCTION_SOURCES
+        src/game/score.cpp
+        src/game/allocate.cpp
+    LINK_SDL
+)
+if(MSVC)
+    target_compile_options(test_score PRIVATE /Gy)
+    target_link_options(test_score PRIVATE /OPT:REF)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_score PRIVATE -ffunction-sections -fdata-sections)
+    if(APPLE)
+        target_link_options(test_score PRIVATE -Wl,-dead_strip)
+    else()
+        target_link_options(test_score PRIVATE -Wl,--gc-sections)
+    endif()
+endif()
+
 orion2re_add_unit_test(test_resource_reload
     SOURCES tests/unit/resource_reload_test.cpp
     PRODUCTION_SOURCES

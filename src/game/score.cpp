@@ -1230,7 +1230,8 @@ namespace SCORE {
 
     int16_t __cdecl Player_Score(int16_t player_idx) {
         allocate::Push_Block(MOX::screen_seg);
-        hi = (s_hiscore*)allocate::Allocate_Next_Block(MOX::screen_seg, sizeof(s_hiscore));
+        hi = (s_hiscore*)allocate::Allocate_Next_Block_Aligned(
+            MOX::screen_seg, sizeof(s_hiscore), alignof(s_hiscore));
         memset(hi, 0, sizeof(s_hiscore));
         hi->player_idx = (int8_t)player_idx;
         Calculate_Hi_Scores(player_idx);
