@@ -319,10 +319,10 @@ namespace MOX2 {
         if (MOX2::skip_intro == 0) {
             JIM::Draw_Logos();
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "mox2: logos drawn");
-            fields::Assign_Update_Function(RUSS::Mox_Update);
-            fonts::Load_Palette(5, 0, 0xFF);
-            mouse::Set_Mouse_List(&MOX::mouse_list_arrow, 1);
         }
+        fields::Assign_Update_Function(RUSS::Mox_Update);
+        fonts::Load_Palette(5, 0, 0xFF);
+        mouse::Set_Mouse_List(&MOX::mouse_list_arrow, 1);
 
         JIM::Play_Background_Music();
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "mox2: background music requested");
@@ -428,7 +428,7 @@ namespace MOX2 {
 
         memcpy(MOX2::leave_game_message, thanks_src, thanks_size);
 
-        exitm::Exit_Normally(MOX2::leave_game_message);
+        exitm::Exit_Normally(MOX2::show_exit_message ? MOX2::leave_game_message : "");
     }
 
     int SDLCALL thunk_main2(void* unused) {

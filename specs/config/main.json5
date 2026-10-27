@@ -9763,5 +9763,20 @@
         symbol: "MAP_SCALE::maximum_galaxy_zoom_mode",
       },
     },
+
+    show_exit_message: {
+      title: "Show exit message",
+      description: "Shows the localized thank-you message after quitting the game normally.",
+      remarks: "Disabled by default. Error messages are shown regardless of this setting. This is a local preference and is not saved or synchronized.",
+      examples: ["interface show_exit_message = true;"],
+      group: "interface",
+      namespace: "interface",
+      type: "bool",
+      default: false,
+      bind_root: {
+        header: "game/mox2.h",
+        symbol: "MOX2::show_exit_message",
+      },
+    },
   },
 }

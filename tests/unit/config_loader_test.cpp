@@ -1882,6 +1882,60 @@ DOCTEST_TEST_SUITE("configuration include loader") {
         DOCTEST_CHECK_FALSE(loaded);
     }
 
+    DOCTEST_TEST_CASE("explicit startup config must exist without changing native state") {
+        s_config_test_directory files;
+        files.Initialize_Vfs();
+        config::s_effective_config effective;
+        config::s_cfg_diagnostic diagnostic;
+        bool loaded = true;
+        const auto original = COMBINIT::scroll_interval;
+
+        DOCTEST_CHECK_FALSE(config::Load_Startup_Config(
+            "configs/missing.cfg", "base_game", &effective, &loaded, &diagnostic, true));
+        DOCTEST_CHECK_FALSE(loaded);
+        DOCTEST_CHECK(diagnostic.location.source == "configs/missing.cfg");
+        DOCTEST_CHECK(diagnostic.message == "selected startup configuration not found");
+        DOCTEST_CHECK(COMBINIT::scroll_interval == original);
+    }
+
+    DOCTEST_TEST_CASE("selected startup config replaces default and remains the reload entry point") {
+        s_config_test_directory files;
+        files.Write("orion2re.cfg", "interface scroll_interval = 20;\n");
+        files.Write("configs/common.cfg", "interface scroll_interval = 60;\n");
+        files.Write("configs/test.cfg", "include common.cfg;\ninterface scroll_interval = 75;\n");
+        files.Initialize_Vfs();
+        config::s_effective_config effective;
+        config::s_cfg_diagnostic diagnostic;
+        bool loaded = false;
+
+        DOCTEST_REQUIRE(config::Load_Startup_Config(
+            "configs/test.cfg", "base_game", &effective, &loaded, &diagnostic, true));
+        DOCTEST_CHECK(loaded);
+        DOCTEST_CHECK(COMBINIT::scroll_interval == 75);
+        DOCTEST_REQUIRE(config::Get_Active_Config() != nullptr);
+        DOCTEST_CHECK(config::Get_Active_Config()->entry_path == "configs/test.cfg");
+
+        files.Write("configs/test.cfg", "include common.cfg;\ninterface scroll_interval = 80;\n");
+        DOCTEST_REQUIRE(config::Reload_All_Active_Config_Groups(&diagnostic));
+        DOCTEST_CHECK(COMBINIT::scroll_interval == 80);
+        DOCTEST_CHECK(config::Get_Active_Config()->entry_path == "configs/test.cfg");
+    }
+
+    DOCTEST_TEST_CASE("explicit startup config rejects absolute and escaping paths") {
+        s_config_test_directory files;
+        files.Initialize_Vfs();
+        for (const char* path : {"../escape.cfg", "/absolute.cfg", "C:\\absolute.cfg"}) {
+            DOCTEST_CAPTURE(path);
+            config::s_effective_config effective;
+            config::s_cfg_diagnostic diagnostic;
+            bool loaded = true;
+            DOCTEST_CHECK_FALSE(config::Load_Startup_Config(
+                path, "base_game", &effective, &loaded, &diagnostic, true));
+            DOCTEST_CHECK_FALSE(loaded);
+            DOCTEST_CHECK(diagnostic.message == "invalid configuration entry path");
+        }
+    }
+
     DOCTEST_TEST_CASE("invalid startup config preserves native state") {
         s_config_test_directory files;
         files.Write("orion2re.cfg",

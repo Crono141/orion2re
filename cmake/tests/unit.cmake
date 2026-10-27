@@ -35,6 +35,7 @@ set(ORION2RE_DEFAULT_CONFIG_SOURCES
     src/game/mainmenu_config.cpp
     src/game/maintain_config.cpp
     src/game/mainscr_config.cpp
+    src/game/mox2_config.cpp
     src/game/multplay_config.cpp
     src/game/newtech_config.cpp
     src/game/officer_config.cpp
@@ -491,6 +492,14 @@ orion2re_add_unit_test(test_config_lifecycle
         tests/fakes/fake_arena_runtime.cpp
         tests/fakes/fake_config_runtime.cpp
     LINK_SDL
+)
+
+orion2re_add_unit_test(test_startup_options
+    SOURCES
+        tests/unit/startup_options_test.cpp
+    PRODUCTION_SOURCES
+        src/command_line.cpp
+        src/startup_options.cpp
 )
 
 orion2re_add_unit_test(test_config_loader

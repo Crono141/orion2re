@@ -11,6 +11,18 @@ Press Alt+Enter to switch between windowed and full-screen display without chang
 Vertical synchronization is enabled by default. Set `interface vsync_enabled = false;` if it causes a problem with the display; disabling it may cause visible tearing.
 
 
+## Startup and Exit
+
+Use `/skip-intro` on Windows or `-skip-intro` on Linux and macOS to skip the logos and intro movie. See [startup options](../legacy-modding/configuration.md#startup-options) for selecting a configuration file or loading a save at launch.
+
+The thank-you dialog on normal exit is disabled by default. To restore it, add this to your configuration:
+
+```text
+interface show_exit_message = true;
+```
+
+This local preference does not suppress error messages and is not stored in saved games or synchronized in multiplayer.
+
 ## Display Scaling
 
 Set `interface scaler` in `data/orion2re.cfg` to choose how the game image is enlarged. Close the game, edit the setting with a text editor, and restart the game. The default is `pixelart`.

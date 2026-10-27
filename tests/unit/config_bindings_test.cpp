@@ -43,6 +43,7 @@
 #include "game/mainmenu.h"
 #include "game/mainscr.h"
 #include "game/mox.h"
+#include "game/mox2.h"
 #include "game/multplay.h"
 #include "game/newtech.h"
 #include "game/newpup.h"
@@ -1259,6 +1260,7 @@ DOCTEST_TEST_CASE("interface and colony formula settings preserve 1.50 defaults"
 
 DOCTEST_TEST_CASE("local presentation settings stay out of saves and synchronization") {
     const char* paths[] = {
+        "interface.show_exit_message",
         "interface.allow_future_technology_browsing",
         "interface.main_menu_mod_list",
     };
@@ -1272,6 +1274,24 @@ DOCTEST_TEST_CASE("local presentation settings stay out of saves and synchroniza
         DOCTEST_CHECK_FALSE(group->save);
         DOCTEST_CHECK_FALSE(group->synchronize);
     }
+}
+
+DOCTEST_TEST_CASE("exit message defaults off and can be enabled through configuration") {
+    config::s_config_state state;
+    DOCTEST_REQUIRE(config::Initialize_Defaults(&state));
+    DOCTEST_REQUIRE(config::Commit_State(&state));
+    DOCTEST_CHECK_FALSE(MOX2::show_exit_message);
+
+    config::s_config_write_set writes;
+    config::s_cfg_diagnostic diagnostic;
+    DOCTEST_REQUIRE(Append_Decoded_("interface show_exit_message = true;", &writes, &diagnostic));
+    DOCTEST_REQUIRE(config::Apply_Write_Set(&writes, &state, &diagnostic));
+    DOCTEST_REQUIRE(config::Commit_State(&state));
+    DOCTEST_CHECK(MOX2::show_exit_message);
+
+    DOCTEST_REQUIRE(config::Initialize_Defaults(&state));
+    DOCTEST_REQUIRE(config::Commit_State(&state));
+    DOCTEST_CHECK_FALSE(MOX2::show_exit_message);
 }
 
 DOCTEST_TEST_CASE("saved interface settings and synchronized policies use distinct groups") {
