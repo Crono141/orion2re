@@ -2165,6 +2165,52 @@ namespace hd_sprites {
         Stamp(image, index, value, -1);
     }
 
+    void Bitmap_Flip(const void* dst, const void* src, bool vertical) {
+        if (!enabled) {
+            return;
+        }
+        Flush_Pending();
+        const auto from = images.find(src);
+        auto to = images.find(dst);
+        if (to == images.end()) {
+            return;
+        }
+        s_surface& target = to->second;
+        if (from == images.end() || from->second.hd.empty() || from->second.width != target.width ||
+            from->second.height != target.height) {
+            target.hd.clear();
+            target.shadow.clear();
+            target.mark.clear();
+            return;
+        }
+        // Mirrored copies (combat ships facing left or down are their right-facing frames flipped):
+        // the HD image is mirrored the same way, then replaces the target's.
+        const s_surface& source = from->second;
+        const int32_t w = source.width;
+        const int32_t h = source.height;
+        std::vector<uint32_t> hd(source.hd.size());
+        std::vector<uint16_t> shadow(source.shadow.size());
+        const int32_t hw = w * S;
+        const int32_t hh = h * S;
+        for (int32_t y = 0; y < hh; ++y) {
+            for (int32_t x = 0; x < hw; ++x) {
+                const int32_t sx = vertical ? x : hw - 1 - x;
+                const int32_t sy = vertical ? hh - 1 - y : y;
+                hd[(size_t)y * hw + x] = source.hd[(size_t)sy * hw + sx];
+            }
+        }
+        for (int32_t y = 0; y < h; ++y) {
+            for (int32_t x = 0; x < w; ++x) {
+                const int32_t sx = vertical ? x : w - 1 - x;
+                const int32_t sy = vertical ? h - 1 - y : y;
+                shadow[(size_t)y * w + x] = source.shadow[(size_t)sy * w + sx];
+            }
+        }
+        target.hd = std::move(hd);
+        target.shadow = std::move(shadow);
+        target.mark.assign(target.shadow.size(), 0u);
+    }
+
     void Bitmap_Copy(const void* dst, const void* src) {
         if (!enabled || dst == src) {
             return;
