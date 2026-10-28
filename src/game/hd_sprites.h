@@ -77,6 +77,8 @@ namespace hd_sprites {
     // Pixel `index` of `bitmap` was written with `value` by the current draw.
     void Stamp_Bitmap(const void* bitmap, int32_t index, uint8_t value);
     // Same-size copy of src's HD surface to dst (bitmap::Copy_Bitmap_To_Bitmap etc.).
+    // bitmap::Flip_Bitmap: dst becomes src mirrored (vertical: top to bottom, else left to right).
+    void Bitmap_Flip(const void* dst, const void* src, bool vertical);
     void Bitmap_Copy(const void* dst, const void* src);
     // `dst` (width x height, pixels at `dst_pixels`) is a resized copy of `src`
     // (bitmap::Scale_Bitmap, e.g. stars on a zoomed-out galaxy).

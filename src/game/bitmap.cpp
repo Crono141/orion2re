@@ -148,6 +148,7 @@ namespace bitmap {
                 shear::Flip_Bitmap_Left_Different(src_pixels, width, height, dst_pixels);
             }
         }
+        hd_sprites::Bitmap_Flip(dst_hdr, src_hdr, flip_mode == 0 || flip_mode == 1);
     }
 
     void __cdecl Copy_Bitmap_To_Bitmap(s_animation_header* dst, s_animation_header* src) {
