@@ -2021,9 +2021,11 @@ endforeach()
 orion2re_add_unit_test(test_fields
     SOURCES
         tests/unit/fields_test.cpp
+        tests/unit/mouse_wheel_test.cpp
     PRODUCTION_SOURCES
         src/game/exitm.cpp
         src/game/fields.cpp
+        src/game/mouse_wheel.cpp
     FAKE_SOURCES
         tests/fakes/fake_animate.cpp
         tests/fakes/fake_fields_runtime.cpp

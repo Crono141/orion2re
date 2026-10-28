@@ -82,6 +82,7 @@
 #include "netadapter.h"
 #include "netcode.h"
 #include "timer.h"
+#include "mouse_wheel.h"
 #include "time.h"
 #include "contact.h"
 #include "coldraw.h"

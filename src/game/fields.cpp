@@ -180,6 +180,12 @@ namespace fields {
             return 0;
         }
 
+        // A mouse wheel notch presses the arrow button of the list under the pointer.
+        const int16_t wheel_field = mouse_wheel::Take_Field();
+        if (wheel_field != 0) {
+            return wheel_field;
+        }
+
         int16_t input_result = Interpret_Mouse_Input();
         video::Set_Page_Off();
 
