@@ -198,6 +198,7 @@ namespace replace {
     }
 
     void __cdecl Replace_Color_Range(s_animation_header* anim, uint8_t* palette_map, int16_t start_color, int16_t num_colors) {
+        hd_sprites::Note_Recolor(anim, start_color, num_colors, palette_map);
         int32_t end_color = num_colors + start_color - 1;
         animate::animation_header = anim;
 

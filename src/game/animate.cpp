@@ -41,6 +41,7 @@ namespace animate {
 
                 int dest_idx = row_base + skip;
                 int sprite_end = sprite_idx + count;
+                const int run_start = dest_idx;
 
                 while (sprite_idx < sprite_end) {
                     if (dest_idx >= 0x12C00) {
@@ -52,6 +53,7 @@ namespace animate {
                     dest_idx++;
                     sprite_idx++;
                 }
+                hd_sprites::Stamp_Run((const uint8_t*)(vpage + run_start), (dest_idx - run_start) * 4);
             }
         }
 
@@ -90,6 +92,7 @@ namespace animate {
 
     void __cdecl Draw(int16_t x, int16_t y, s_animation_header* anim) {
         animation_header = anim;
+        hd_sprites::Begin_Draw(anim, x, y);
 
         if (anim->flags & ANIMATION_FLAG_HAS_PALETTE) {
             Set_Animation_Palette();
@@ -145,6 +148,7 @@ namespace animate {
         } else {
             if (video::screen_refresh_flag > 1) {
                 if (anim->width == 0 || anim->height == 0) {
+                    hd_sprites::End_Draw();
                     return;
                 }
 
@@ -200,6 +204,7 @@ namespace animate {
         }
 
     update_frame:
+        hd_sprites::End_Draw();
         anim->current_frame++;
         if (anim->flags & 0x20) {
             if (anim->current_frame >= anim->frame_count) {
@@ -240,6 +245,7 @@ namespace animate {
                     uint8_t pixel = frame_data[src_idx++];
                     if (pixel < 0xf0) {
                         video::current_video_page[dest_ptr] = pixel;
+                        hd_sprites::Stamp_Run(&video::current_video_page[dest_ptr], 1);
                     }
                     dest_ptr++;
                 }
@@ -280,9 +286,11 @@ namespace animate {
                     uint8_t pixel = pixel_data[i];
                     if (pixel < 0xF0) {
                         video_ptr[dest_idx] = pixel;
+                        hd_sprites::Stamp_Run(&video_ptr[dest_idx], 1);
                     } else {
                         uint8_t background_pixel = video_ptr[dest_idx];
                         video_ptr[dest_idx] = video::glass_remap_colors[pixel - 0xF0][background_pixel];
+                        hd_sprites::Stamp_Glass(&video_ptr[dest_idx], background_pixel, pixel - 0xF0);
                     }
                     dest_idx++;
                 }
@@ -316,9 +324,11 @@ namespace animate {
                         if (pixel != 0) {
                             if (pixel < 0xF0) {
                                 v_page[screen_offset] = pixel;
+                                hd_sprites::Stamp_Run(&v_page[screen_offset], 1);
                             } else {
                                 uint8_t existing_pixel = v_page[screen_offset];
                                 v_page[screen_offset] = video::glass_remap_colors[pixel - 0xF0][existing_pixel];
+                                hd_sprites::Stamp_Glass(&v_page[screen_offset], existing_pixel, pixel - 0xF0);
                             }
                         }
                         sprite_idx++;
@@ -427,6 +437,8 @@ namespace animate {
                         uint8_t pixel = frame_data[data_byte_offset++];
                         platform::offscreen_surface[screen_offset] = pixel;
                         video::current_video_page[screen_offset] = pixel;
+                        hd_sprites::Stamp_Page(platform::offscreen_surface, &platform::offscreen_surface[screen_offset], 1);
+                        hd_sprites::Stamp_Run(&video::current_video_page[screen_offset], 1);
                         screen_offset++;
                     } while (screen_offset < end_screen_offset);
                 }
@@ -440,6 +452,12 @@ namespace animate {
     }
 
     void __cdecl Remap_Draw(int16_t x, int16_t y, s_animation_header* anim) {
+        hd_sprites::Begin_Remap_Draw(anim, x, y, remap::picture_remap_color_list);
+        Remap_Draw_Body(x, y, anim);
+        hd_sprites::End_Draw();
+    }
+
+    void __cdecl Remap_Draw_Body(int16_t x, int16_t y, s_animation_header* anim) {
         animation_header = anim;
         int16_t x2 = anim->width + x - 1;
         int16_t y2 = anim->height + y - 1;
@@ -534,6 +552,7 @@ namespace animate {
 
     void __cdecl Draw_No_Glass(int16_t x, int16_t y, s_animation_header* header) {
         animation_header = header;
+        hd_sprites::Begin_Draw(header, x, y);
 
         int16_t x2 = x + header->width - 1;
         int16_t y2 = y + header->height - 1;
@@ -634,6 +653,7 @@ namespace animate {
             }
         }
 
+        hd_sprites::End_Draw();
         animation_header->current_frame++;
 
         if ((animation_header->flags & 0x20) != 0) {
@@ -684,7 +704,9 @@ namespace animate {
                     if (screen_offset < end_offset) {
                         do {
                             uint8_t color_idx = sprite_data[data_offset++];
-                            video::current_video_page[screen_offset++] = remap::picture_remap_color_list[color_idx];
+                            video::current_video_page[screen_offset] = remap::picture_remap_color_list[color_idx];
+                            hd_sprites::Stamp_Run(&video::current_video_page[screen_offset], 1);
+                            ++screen_offset;
                         } while (screen_offset < end_offset);
                     }
 
@@ -710,6 +732,7 @@ namespace animate {
                         uint8_t pixel = bitmap[src_offset];
                         if (pixel != 0 && pixel < 0xf0) {
                             video::current_video_page[dest_offset] = pixel;
+                            hd_sprites::Stamp_Run(&video::current_video_page[dest_offset], 1);
                         }
                         ++src_offset;
                         ++dest_offset;
@@ -820,6 +843,7 @@ namespace animate {
 
                     while (screen_offset < end_x) {
                         video::current_video_page[screen_offset] = remap::picture_remap_color_list[frame_data[data_idx]];
+                        hd_sprites::Stamp_Run(&video::current_video_page[screen_offset], 1);
                         data_idx++;
                         screen_offset++;
                     }

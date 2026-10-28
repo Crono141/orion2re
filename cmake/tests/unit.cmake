@@ -232,7 +232,7 @@ orion2re_add_unit_test(test_resource_reload
         vendors/libsmacker/smk_hufftree.c
         vendors/yyjson/src/yyjson.c
     LIBRARIES
-        uv_a orion2re_lz4 orion2re_stb_vorbis orion2re_lua orion2re_scalers miniz orion2re_imgui
+        uv_a orion2re_lz4 webpdecoder orion2re_stb_vorbis orion2re_lua orion2re_scalers miniz orion2re_imgui
     LINK_SDL
 )
 target_include_directories(test_resource_reload PRIVATE
@@ -1997,6 +1997,7 @@ orion2re_add_unit_test(test_farload_buffer_vfs
         src/game/vfs_path.cpp
         src/game/vfs_zip.cpp
     FAKE_SOURCES
+        tests/fakes/fake_hd_sprites_register.cpp
         tests/fakes/fake_allocate.cpp
         tests/fakes/fake_exitm.cpp
         tests/fakes/fake_fields_helpers_runtime.cpp

@@ -61,6 +61,7 @@ namespace animate {
      *  @param anim Animation header to draw.
      */
     void __cdecl Remap_Draw(int16_t x, int16_t y, s_animation_header* anim);
+    void __cdecl Remap_Draw_Body(int16_t x, int16_t y, s_animation_header* anim);
 
     /** Draws an animated sprite frame using the remap table.
      *  @param x Destination x coordinate.

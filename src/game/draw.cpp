@@ -33,6 +33,7 @@ namespace draw {
                 uint8_t pixel = *bitmap_data++;
                 if (pixel != 0) {
                     *dst = pixel;
+                    hd_sprites::Stamp_Run(dst, 1);
                 }
             }
         }
@@ -46,6 +47,7 @@ namespace draw {
             uint8_t color = src[i];
             if (color != 0x00) {
                 dst[i] = color;
+                hd_sprites::Stamp_Run(dst + i, 1);
             }
         }
     }
@@ -84,6 +86,7 @@ namespace draw {
                 dest_ptr += run.skip_count;
 
                 memcpy(dest_ptr, stream, run.pixel_count);
+                hd_sprites::Stamp_Run(dest_ptr, run.pixel_count);
                 dest_ptr += run.pixel_count;
                 stream += run.pixel_count;
 
