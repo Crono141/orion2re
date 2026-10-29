@@ -5,9 +5,9 @@ namespace replace {
         // A recoloured off-screen bitmap (e.g. the colony build screen's ship, colours moved into
         // the colony palette) keeps its HD image in step; recoloured loaded sprites are covered by
         // hd_sprites::Note_Recolor.
-        void Sync_Hd_Bitmap(s_animation_header* anim) {
+        void Recolor_Hd_Bitmap(s_animation_header* anim, int32_t first, int32_t count, const uint8_t* map) {
             if ((anim->flags & ANIMATION_FLAG_DRAW_MODE_MASK) == ANIMATION_DRAW_MODE_BITMAP) {
-                hd_sprites::Bitmap_Sync(anim, Animation_Frame_Data_(anim, anim->current_frame));
+                hd_sprites::Bitmap_Recolor(anim, first, count, map);
             }
         }
     } // namespace
@@ -183,7 +183,7 @@ namespace replace {
                 }
             }
         }
-        Sync_Hd_Bitmap(anim);
+        Recolor_Hd_Bitmap(anim, old_color, 1, &new_color);
     }
 
     void __cdecl Establish_Color_Gradient(int16_t scale, int16_t invert) {
@@ -293,7 +293,7 @@ namespace replace {
                 }
             }
         }
-        Sync_Hd_Bitmap(anim);
+        Recolor_Hd_Bitmap(anim, start_color, num_colors, palette_map);
     }
 
     void __cdecl Shift_Palette_Range(s_animation_header* anim, int32_t shift) {
