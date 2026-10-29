@@ -66,6 +66,7 @@ namespace hd_sprites {
             bool has_source_hash;
             uint32_t source_hash; // FNV-1a of the LBX entry the art was made from
             bool glassed;
+            bool redrawn; // new art (sprite.json "redraw"), not an upscale of the original pixels
             int32_t scale;
             int32_t frame_count;
             s_hd_frame* frames;
@@ -128,6 +129,10 @@ namespace hd_sprites {
         enum e_timer { TIMER_RENDER,
             TIMER_COPY,
             TIMER_PUBLISH,
+            TIMER_UPGRADE, // parts of TIMER_PUBLISH
+            TIMER_EVICT,
+            TIMER_PREFETCH,
+            TIMER_SETTLE,
             TIMER_COUNT };
         uint64_t stats_timer_ns[TIMER_COUNT];
         uint64_t stats_last_publish_ns;
@@ -519,6 +524,7 @@ namespace hd_sprites {
             }
             asset->scale = (int32_t)yyjson_get_int(yyjson_obj_get(root, "scale"));
             asset->glassed = yyjson_get_bool(yyjson_obj_get(root, "glassed"));
+            asset->redrawn = yyjson_obj_get(root, "redraw") != nullptr;
             const char* format = yyjson_get_str(yyjson_obj_get(root, "format"));
             // Frame files are <FFF>.png, or <FFF>.webp when sprite.json says "image": "webp".
             const char* image = yyjson_get_str(yyjson_obj_get(root, "image"));
@@ -1165,6 +1171,7 @@ namespace hd_sprites {
             const s_hd_frame* frame = nullptr;
             bool glyph = false;
             bool glassed = false;
+            bool redrawn = false;
             int32_t x = 0; // where the sprite's top-left lands in the target
             int32_t y = 0;
             bool remapped = false;
@@ -1368,8 +1375,13 @@ namespace hd_sprites {
         // Whether the art agrees with what the game drew: inside the sprite, the art's colour at
         // each pixel centre must mostly be close to the pixel written. Art made with the wrong
         // palette, for another frame or for different source pixels fails, and the draw shows
-        // the original pixels instead.
+        // the original pixels instead. Redrawn art is new art by design, so only upscales are
+        // checked: a redrawn combat ship differs from its pixels by about half and would flicker
+        // between HD and original as it turns.
         bool Art_Matches(const s_surface& target) {
+            if (draw.redrawn) {
+                return true;
+            }
             int32_t samples = 0;
             int32_t mismatches = 0;
             for (const s_stamp& stamp : pending) {
@@ -1482,6 +1494,7 @@ namespace hd_sprites {
             draw.frame = nullptr;
             draw.glyph = false;
             draw.glassed = false;
+            draw.redrawn = false;
             draw.remapped = false;
             draw.shade.clear();
             draw.image = nullptr;
@@ -1603,6 +1616,7 @@ namespace hd_sprites {
                 draw.remapped = true;
             }
             draw.glassed = asset->glassed || (anim->flags & ANIMATION_FLAG_GLASSED) != 0;
+            draw.redrawn = asset->redrawn;
             Settle_Art_Area();
         }
 
@@ -2034,6 +2048,7 @@ namespace hd_sprites {
         draw.x = x;
         draw.y = y;
         draw.glassed = asset->glassed;
+        draw.redrawn = asset->redrawn;
         Settle_Art_Area();
         if (probe_x >= 0) {
             draw.name = asset->directory;
@@ -2599,7 +2614,10 @@ namespace hd_sprites {
             stats_last_publish_ns = now;
         }
         s_scoped_timer timer(TIMER_PUBLISH);
-        Upgrade_Deferred();
+        {
+            s_scoped_timer part(TIMER_UPGRADE);
+            Upgrade_Deferred();
+        }
         if (trace_enabled) {
             if (!deferred.empty()) {
                 trace_wait_start = trace_wait_start != 0 ? trace_wait_start : SDL_GetTicks();
@@ -2611,20 +2629,35 @@ namespace hd_sprites {
             }
         }
         publish_count++;
-        Evict_Over_Budget();
-        Pump_Prefetch(PREFETCH_BUDGET_NS);
+        {
+            s_scoped_timer part(TIMER_EVICT);
+            Evict_Over_Budget();
+        }
+        {
+            s_scoped_timer part(TIMER_PREFETCH);
+            Pump_Prefetch(PREFETCH_BUDGET_NS);
+        }
         // Settle pixels changed by code without hooks: the original pixel, enlarged.
-        const uint32_t settled = Settle(page_off, video::g_page_off.pixels, 0, 0, page_off.width, page_off.height);
+        uint32_t settled;
+        {
+            s_scoped_timer part(TIMER_SETTLE);
+            settled = Settle(page_off, video::g_page_off.pixels, 0, 0, page_off.width, page_off.height);
+        }
         if (stats_enabled) {
             stats_settled_pixels += settled;
             if (++stats_publishes % 100 == 0) {
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "hd stats: %u pixels settled to plain scaling over the last 100 frames; per frame: render %.2f ms, "
-                    "page copies %.2f ms, publish %.2f ms, longest frame %.0f ms; cache %lld MB decoded, %d frames queued, %d draws waiting for art",
+                    "page copies %.2f ms, publish %.2f ms (upgrades %.2f, eviction %.2f, prefetch %.2f, settle %.2f), longest frame %.0f ms; "
+                    "cache %lld MB decoded, %d frames queued, %d draws waiting for art",
                     stats_settled_pixels,
                     (double)stats_timer_ns[TIMER_RENDER] / 1e8,
                     (double)stats_timer_ns[TIMER_COPY] / 1e8,
                     (double)stats_timer_ns[TIMER_PUBLISH] / 1e8,
+                    (double)stats_timer_ns[TIMER_UPGRADE] / 1e8,
+                    (double)stats_timer_ns[TIMER_EVICT] / 1e8,
+                    (double)stats_timer_ns[TIMER_PREFETCH] / 1e8,
+                    (double)stats_timer_ns[TIMER_SETTLE] / 1e8,
                     (double)stats_longest_frame_ns / 1e6,
                     (long long)(decoded_bytes.load() >> 20),
                     Queue_Length(),
