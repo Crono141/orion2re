@@ -89,6 +89,10 @@ namespace hd_sprites {
     // The pixels of `bitmap` were changed in place by plain recolouring (Mask_Out_Colors etc.):
     // HD pixels whose page pixel became 0 turn transparent, other changes are recoloured.
     void Bitmap_Sync(const void* bitmap, const uint8_t* pixels);
+    // Every non-zero index of `bitmap` in [first, first + count) became map[index - first]
+    // (replace::Replace_Color_Range): indexed HD pixels take the same map, true-colour ones keep
+    // their colour.
+    void Bitmap_Recolor(const void* bitmap, int32_t first, int32_t count, const uint8_t* map);
     // A rectangle of the current page captured into `bitmap`.
     void Bitmap_Capture(const void* bitmap, int32_t x1, int32_t y1, int32_t width, int32_t height);
 

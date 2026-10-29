@@ -2170,6 +2170,7 @@ namespace hd_sprites {
             return;
         }
         Flush_Pending();
+        s_scoped_timer timer(TIMER_COPY);
         const auto from = images.find(src);
         auto to = images.find(dst);
         if (to == images.end()) {
@@ -2188,26 +2189,49 @@ namespace hd_sprites {
         const s_surface& source = from->second;
         const int32_t w = source.width;
         const int32_t h = source.height;
-        std::vector<uint32_t> hd(source.hd.size());
-        std::vector<uint16_t> shadow(source.shadow.size());
         const int32_t hw = w * S;
         const int32_t hh = h * S;
-        for (int32_t y = 0; y < hh; ++y) {
-            for (int32_t x = 0; x < hw; ++x) {
-                const int32_t sx = vertical ? x : hw - 1 - x;
-                const int32_t sy = vertical ? hh - 1 - y : y;
-                hd[(size_t)y * hw + x] = source.hd[(size_t)sy * hw + sx];
+        if (&source == &target) {
+            // In place: swap mirrored pairs.
+            if (vertical) {
+                for (int32_t y = 0; y < hh / 2; ++y) {
+                    std::swap_ranges(target.hd.begin() + (ptrdiff_t)y * hw, target.hd.begin() + (ptrdiff_t)(y + 1) * hw, target.hd.begin() + (ptrdiff_t)(hh - 1 - y) * hw);
+                }
+                for (int32_t y = 0; y < h / 2; ++y) {
+                    std::swap_ranges(target.shadow.begin() + (ptrdiff_t)y * w, target.shadow.begin() + (ptrdiff_t)(y + 1) * w, target.shadow.begin() + (ptrdiff_t)(h - 1 - y) * w);
+                }
+            } else {
+                for (int32_t y = 0; y < hh; ++y) {
+                    std::reverse(target.hd.begin() + (ptrdiff_t)y * hw, target.hd.begin() + (ptrdiff_t)(y + 1) * hw);
+                }
+                for (int32_t y = 0; y < h; ++y) {
+                    std::reverse(target.shadow.begin() + (ptrdiff_t)y * w, target.shadow.begin() + (ptrdiff_t)(y + 1) * w);
+                }
+            }
+        } else {
+            // Rows are copied whole into the target's existing buffers: this runs for every mirrored
+            // combat ship on every frame.
+            target.hd.resize(source.hd.size());
+            target.shadow.resize(source.shadow.size());
+            for (int32_t y = 0; y < hh; ++y) {
+                const auto row = source.hd.begin() + (ptrdiff_t)(vertical ? hh - 1 - y : y) * hw;
+                const auto out = target.hd.begin() + (ptrdiff_t)y * hw;
+                if (vertical) {
+                    std::copy(row, row + hw, out);
+                } else {
+                    std::reverse_copy(row, row + hw, out);
+                }
+            }
+            for (int32_t y = 0; y < h; ++y) {
+                const auto row = source.shadow.begin() + (ptrdiff_t)(vertical ? h - 1 - y : y) * w;
+                const auto out = target.shadow.begin() + (ptrdiff_t)y * w;
+                if (vertical) {
+                    std::copy(row, row + w, out);
+                } else {
+                    std::reverse_copy(row, row + w, out);
+                }
             }
         }
-        for (int32_t y = 0; y < h; ++y) {
-            for (int32_t x = 0; x < w; ++x) {
-                const int32_t sx = vertical ? x : w - 1 - x;
-                const int32_t sy = vertical ? h - 1 - y : y;
-                shadow[(size_t)y * w + x] = source.shadow[(size_t)sy * w + sx];
-            }
-        }
-        target.hd = std::move(hd);
-        target.shadow = std::move(shadow);
         target.mark.assign(target.shadow.size(), 0u);
     }
 
@@ -2325,6 +2349,48 @@ namespace hd_sprites {
                     } else {
                         pixel = Glass_Tint(pixel, level, 255u);
                     }
+                }
+            }
+        }
+    }
+
+    void Bitmap_Recolor(const void* bitmap, int32_t first, int32_t count, const uint8_t* map) {
+        if (!enabled || map == nullptr || count <= 0) {
+            return;
+        }
+        Flush_Pending();
+        s_scoped_timer timer(TIMER_COPY);
+        auto found = images.find(bitmap);
+        if (found == images.end() || found->second.hd.empty()) {
+            return;
+        }
+        s_surface& image = found->second;
+        const auto recolor = [&](uint32_t index) {
+            return index != 0 && (int32_t)index >= first && (int32_t)index < first + count ? (uint32_t)map[index - first] : index;
+        };
+        const auto recolor_pixel = [&](uint32_t& pixel) {
+            if ((pixel & HD_LITERAL) == 0 && pixel != HD_CLEAR) {
+                pixel = (pixel & ~0xFFu) | recolor(pixel & 0xFFu);
+            }
+        };
+        // Sprite-sized bitmaps (the build screen's ship) remap every HD pixel, since the art reaches
+        // past the 1x silhouette. Big ones (combat_bitmap, recoloured every frame) only remap the
+        // blocks whose page pixel was in the range.
+        const bool whole = image.width * image.height <= 256 * 256;
+        const size_t stride = (size_t)image.width * S;
+        for (int32_t i = 0; i < image.width * image.height; ++i) {
+            const uint16_t old = image.shadow[(size_t)i];
+            const bool hit = old != SHADOW_NONE && recolor(old) != old;
+            if (hit) {
+                image.shadow[(size_t)i] = (uint16_t)recolor(old);
+            }
+            if (!hit && !whole) {
+                continue;
+            }
+            uint32_t* block = &image.hd[(size_t)(i / image.width) * S * stride + (size_t)(i % image.width) * S];
+            for (int32_t sy = 0; sy < S; ++sy) {
+                for (int32_t sx = 0; sx < S; ++sx) {
+                    recolor_pixel(block[sy * stride + sx]);
                 }
             }
         }
