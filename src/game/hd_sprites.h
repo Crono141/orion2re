@@ -37,6 +37,11 @@ namespace hd_sprites {
     // Enables the feature when the VFS provides hd/pack.json. Safe to call more than once.
     void Initialize();
     bool Enabled();
+    // Art requested between Begin_Preload and End_Preload (the LBX entries a screen loads while it
+    // sets up, e.g. a battle's ships) is decoded before End_Preload returns, so the screen starts
+    // with its art in memory instead of streaming it in. Waits at most `max_ms`.
+    void Begin_Preload();
+    void End_Preload(uint32_t max_ms);
     // Stops the art decoding threads (before SDL shuts down).
     void Shutdown();
 
